@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AI Agent Dashboard - Manage intelligent blockchain agents with Dialect event monitoring" />
+    <meta name="keywords" content="AI, agents, blockchain, Solana, Dialect, automation, chat, events" />
+    <meta name="author" content="AI Agent Dashboard" />
+
+    <!-- Theme and PWA Meta Tags -->
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="AI Agent Dashboard" />
+
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="AI Agent Dashboard" />
+    <meta property="og:description" content="Manage intelligent blockchain agents with Dialect event monitoring" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+
+    <!-- Twitter Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI Agent Dashboard" />
+    <meta name="twitter:description" content="Manage intelligent blockchain agents with Dialect event monitoring" />
+    <meta name="twitter:image" content="/twitter-image.png" />
+
+    <title>AI Agent Dashboard</title>
+
+    <!-- Preconnect to external domains for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Google Fonts -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Initial theme setup to prevent flash -->
+    <script>
+      // Set initial theme based on system preference or stored preference
+      (function() {
+        const savedTheme = localStorage.getItem('theme');
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+
+        // Set CSS custom properties for theme
+        if (theme === 'dark') {
+          document.documentElement.style.setProperty('--toast-bg', '#1f2937');
+          document.documentElement.style.setProperty('--toast-color', '#ffffff');
+        }
+      })();
+    </script>
+
+    <style>
+      /* Prevent flash of unstyled content */
+      html {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+        background-color: #f9fafb;
+        color: #111827;
+        transition: background-color 0.2s ease, color 0.2s ease;
+      }
+
+      .dark body {
+        background-color: #111827;
+        color: #f9fafb;
+      }
+
+      /* Loading spinner */
+      .loading-spinner {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #e5e7eb;
+        border-top: 3px solid #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      .dark .spinner {
+        border-color: #374151;
+        border-top-color: #60a5fa;
+      }
+
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      .loading-text {
+        font-size: 0.875rem;
+        color: #6b7280;
+        font-weight: 500;
+      }
+
+      .dark .loading-text {
+        color: #9ca3af;
+      }
+
+      /* Hide loading when React takes over */
+      #root:not(:empty) + .loading-spinner {
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <!-- Loading fallback -->
+    <div class="loading-spinner">
+      <div class="spinner"></div>
+      <p class="loading-text">Loading AI Agent Dashboard...</p>
+    </div>
+
+    <!-- Vite will inject the main script -->
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Service Worker Registration -->
+    <script>
+      // Register service worker for PWA capabilities
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('SW registered: ', registration);
+            })
+            .catch(registrationError => {
+              console.log('SW registration failed: ', registrationError);
+            });
+        });
+      }
+    </script>
+
+    <!-- Error boundary fallback -->
+    <script>
+      window.addEventListener('error', (event) => {
+        console.error('Global error:', event.error);
+
+        // Show user-friendly error if React fails to load
+        if (!document.getElementById('root').hasChildNodes()) {
+          document.body.innerHTML = `
+            <div style="
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              padding: 2rem;
+              text-align: center;
+              font-family: Inter, sans-serif;
+            ">
+              <h1 style="color: #dc2626; margin-bottom: 1rem;">Oops! Something went wrong</h1>
+              <p style="color: #6b7280; margin-bottom: 2rem;">
+                The AI Agent Dashboard failed to load. Please refresh the page or try again later.
+              </p>
+              <button
+                onclick="window.location.reload()"
+                style="
+                  background: #3b82f6;
+                  color: white;
+                  border: none;
+                  padding: 0.75rem 1.5rem;
+                  border-radius: 0.5rem;
+                  font-weight: 500;
+                  cursor: pointer;
+                "
+              >
+                Refresh Page
+              </button>
+            </div>
+          `;
+        }
+      });
+    </script>
+  </body>
+</html>
