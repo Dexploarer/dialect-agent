@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Styling Test</title>
+    <style>
+        body {
+            font-family: Inter, system-ui, sans-serif;
+            margin: 20px;
+            line-height: 1.5;
+            font-size: 14px;
+            color: #374151;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #f9fafb;
+        }
+        .success {
+            border-color: #10b981;
+            background: #ecfdf5;
+            color: #065f46;
+        }
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 14px;
+            margin: 4px;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="font-size: 24px; margin-bottom: 16px;">New Styling Test</h1>
+    
+    <div class="test-section success">
+        <h3 style="font-size: 18px; margin: 0 0 12px 0;">✅ Styling Rebuild Complete</h3>
+        <p style="margin: 0 0 12px 0;">The CSS has been completely rebuilt with:</p>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li>Clean, minimal CSS approach</li>
+            <li>Proper font sizing (no more oversized text)</li>
+            <li>Component-based styling</li>
+            <li>Professional appearance</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h3 style="font-size: 16px; margin: 0 0 12px 0;">Test the Dashboard</h3>
+        <p style="margin: 0 0 12px 0;">Click the links below to test the new styling:</p>
+        
+        <a href="http://localhost:3001" class="btn">🏠 Open Dashboard</a>
+        <a href="http://localhost:3001/dashboard" class="btn">📊 Dashboard Direct</a>
+        <a href="http://localhost:3000/health" class="btn">🔧 Backend Health</a>
+    </div>
+
+    <div class="test-section">
+        <h3 style="font-size: 16px; margin: 0 0 12px 0;">Expected Changes</h3>
+        <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+            <li><strong>Normal text sizes</strong> - No more super large fonts</li>
+            <li><strong>Compact layout</strong> - Better use of space</li>
+            <li><strong>Professional appearance</strong> - Clean, modern design</li>
+            <li><strong>Smaller cards</strong> - Properly proportioned components</li>
+            <li><strong>Consistent spacing</strong> - Everything aligned properly</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h3 style="font-size: 16px; margin: 0 0 12px 0;">Font Size Reference</h3>
+        <div style="font-size: 12px; color: #6b7280;">12px - Small text</div>
+        <div style="font-size: 14px; color: #374151;">14px - Normal text (default)</div>
+        <div style="font-size: 16px; color: #111827;">16px - Slightly larger</div>
+        <div style="font-size: 18px; color: #111827; font-weight: 600;">18px - Heading text</div>
+        <p style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+            The dashboard should now use these proportional sizes instead of oversized text.
+        </p>
+    </div>
+
+    <script>
+        // Auto-test connectivity
+        async function testConnectivity() {
+            try {
+                const response = await fetch('http://localhost:3001');
+                if (response.ok) {
+                    console.log('✅ Frontend is running');
+                } else {
+                    console.log('❌ Frontend error:', response.status);
+                }
+            } catch (error) {
+                console.log('❌ Frontend not accessible:', error.message);
+            }
+        }
+        
+        testConnectivity();
+        
+        // Check if browser zoom is at 100%
+        if (window.devicePixelRatio !== 1) {
+            const warning = document.createElement('div');
+            warning.style.cssText = 'background: #fef3c7; padding: 12px; margin: 16px 0; border-radius: 6px; border: 1px solid #f59e0b; color: #92400e; font-size: 14px;';
+            warning.innerHTML = '<strong>⚠️ Browser Zoom Detected:</strong> Your browser zoom is not 100%. Press Ctrl+0 (Cmd+0 on Mac) to reset for accurate sizing.';
+            document.body.insertBefore(warning, document.body.firstChild);
+        }
+    </script>
+</body>
+</html>

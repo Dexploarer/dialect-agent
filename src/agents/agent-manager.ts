@@ -4,7 +4,11 @@ import { getDatabaseManager } from '../db/connection.js';
 import { getAIService } from '../lib/ai.js';
 import { getEmbeddingService } from '../lib/embeddings.js';
 import DialectEventMonitor from './dialect-monitor.js';
-import {
+import type { DialectAlertsService } from '../lib/dialect-alerts.js';
+import type { DialectMarketsService } from '../lib/dialect-markets.js';
+import type { DialectPositionsService } from '../lib/dialect-positions.js';
+import type { DialectBlinksService } from '../lib/dialect-blinks.js';
+import type {
   Agent,
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -24,8 +28,6 @@ import {
   WebhookActionConfig,
   TransactionActionConfig,
   AgentError,
-  ExecutionError,
-  ValidationError,
 } from './types.js';
 import type { CoreMessage } from 'ai';
 
@@ -44,6 +46,12 @@ export class AgentManager extends EventEmitter {
   private activeExecutions = new Map<string, ExecutionContext>();
   private executionQueue: Job[] = [];
   private dialectMonitor: DialectEventMonitor;
+  
+  // Dialect services
+  private dialectAlerts?: DialectAlertsService;
+  private dialectMarkets?: DialectMarketsService;
+  private dialectPositions?: DialectPositionsService;
+  private dialectBlinks?: DialectBlinksService;
 
   // Monitoring
   private monitoringTimer: NodeJS.Timeout | null = null;
@@ -77,6 +85,167 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
+   * Set Dialect services for the agent manager
+   */
+  setDialectServices(services: {
+    alerts?: DialectAlertsService;
+    markets?: DialectMarketsService;
+    positions?: DialectPositionsService;
+    blinks?: DialectBlinksService;
+  }): void {
+    if (services.alerts) this.dialectAlerts = services.alerts;
+    if (services.markets) this.dialectMarkets = services.markets;
+    if (services.positions) this.dialectPositions = services.positions;
+    if (services.blinks) this.dialectBlinks = services.blinks;
+    
+    console.log('🔗 Dialect services configured for Agent Manager');
+  }
+
+  /**
+   * Send notification through Dialect Alerts
+   */
+  async sendDialectNotification(
+    walletAddress: string,
+    title: string,
+    message: string,
+    type: 'price' | 'liquidation' | 'trading' | 'system' = 'system',
+    channels: Array<'EMAIL' | 'TELEGRAM' | 'IN_APP' | 'PUSH'> = ['IN_APP'],
+    metadata?: Record<string, unknown>
+  ): Promise<boolean> {
+    if (!this.dialectAlerts) {
+      console.warn('⚠️ Dialect Alerts service not available');
+      return false;
+    }
+
+    try {
+      let result;
+      
+      switch (type) {
+        case 'price':
+          result = await this.dialectAlerts.sendPriceAlert(
+            walletAddress,
+            metadata?.tokenSymbol as string || 'Unknown',
+            metadata?.priceChange as number || 0,
+            metadata?.currentPrice as number || 0,
+            channels
+          );
+          break;
+        case 'liquidation':
+          result = await this.dialectAlerts.sendLiquidationWarning(
+            walletAddress,
+            metadata?.protocol as string || 'Unknown',
+            metadata?.collateralToken as string || 'Unknown',
+            metadata?.healthFactor as number || 0,
+            channels
+          );
+          break;
+        case 'trading':
+          result = await this.dialectAlerts.sendTradingOpportunity(
+            walletAddress,
+            metadata?.tokenSymbol as string || 'Unknown',
+            metadata?.opportunity as string || 'Trading opportunity detected',
+            metadata?.potentialGain as number || 0,
+            channels
+          );
+          break;
+        default:
+          result = await this.dialectAlerts.sendSystemNotification(
+            walletAddress,
+            title,
+            message,
+            metadata?.severity as 'info' | 'warning' | 'error' || 'info',
+            channels
+          );
+      }
+
+      if (result.success) {
+        console.log(`✅ Dialect notification sent to ${walletAddress}: ${title}`);
+        return true;
+      } else {
+        console.error(`❌ Failed to send Dialect notification: ${result.error}`);
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error sending Dialect notification:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get market data for agents
+   */
+  async getMarketData(filters?: {
+    protocol?: string;
+    type?: 'lending' | 'multiply' | 'leverage' | 'liquidity';
+    tokenSymbol?: string;
+    minApy?: number;
+  }): Promise<any[]> {
+    if (!this.dialectMarkets) {
+      console.warn('⚠️ Dialect Markets service not available');
+      return [];
+    }
+
+    try {
+      const result = await this.dialectMarkets.getMarkets(filters);
+      return result.markets;
+    } catch (error) {
+      console.error('❌ Error fetching market data:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get position data for a wallet
+   */
+  async getWalletPositions(walletAddress: string, filters?: {
+    protocol?: string;
+    type?: 'lending' | 'multiply' | 'leverage' | 'liquidity';
+    status?: 'active' | 'liquidated' | 'closed';
+  }): Promise<any[]> {
+    if (!this.dialectPositions) {
+      console.warn('⚠️ Dialect Positions service not available');
+      return [];
+    }
+
+    try {
+      const result = await this.dialectPositions.getPositionsByWallet(walletAddress, filters);
+      return result.positions;
+    } catch (error) {
+      console.error('❌ Error fetching position data:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Execute a blink action
+   */
+  async executeBlinkAction(
+    blinkUrl: string,
+    walletAddress: string,
+    parameters?: Record<string, unknown>
+  ): Promise<{
+    success: boolean;
+    transaction?: string;
+    error?: string;
+  }> {
+    if (!this.dialectBlinks) {
+      console.warn('⚠️ Dialect Blinks service not available');
+      return { success: false, error: 'Blinks service not available' };
+    }
+
+    try {
+      const result = await this.dialectBlinks.executeBlinkAction(blinkUrl, walletAddress, parameters);
+      return result;
+    } catch (error) {
+      console.error('❌ Error executing blink action:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
    * Initialize the agent manager
    */
   async initialize(): Promise<void> {
@@ -86,8 +255,13 @@ export class AgentManager extends EventEmitter {
       // Load existing agents from database
       await this.loadAgentsFromDatabase();
 
-      // Initialize Dialect monitor
-      await this.dialectMonitor.start();
+      // Initialize Dialect monitor (non-blocking)
+      try {
+        await this.dialectMonitor.start();
+      } catch (monitorError) {
+        console.warn('⚠️ Dialect monitor failed to start, continuing without monitoring:', monitorError);
+        // Continue without monitoring
+      }
 
       // Start monitoring
       this.startMonitoring();
@@ -139,15 +313,15 @@ export class AgentManager extends EventEmitter {
       id: agentId,
       name: request.name,
       description: request.description,
-      avatar: request.aiConfig.personality?.traits?.[0] ? this.generateAvatar(request.aiConfig.personality.traits[0]) : undefined,
+      avatar: request.aiConfig.personality?.traits?.[0] ? this.generateAvatar(request.aiConfig.personality.traits[0]) : "",
       isActive: true,
       createdAt: now,
       updatedAt: now,
-      userId,
+      userId: userId || "",
 
       aiConfig: {
         model: 'gpt-4-turbo',
-        provider: 'openai',
+        provider: 'openai' as const,
         temperature: 0.7,
         maxTokens: 1000,
         systemPrompt: this.generateSystemPrompt(request),
@@ -175,7 +349,7 @@ export class AgentManager extends EventEmitter {
         averageResponseTime: 0,
         lastActivity: now,
         uptime: 100,
-        eventsProcessed: {},
+        eventsProcessed: {} as Record<string, number>,
         popularActions: [],
       },
 
@@ -231,7 +405,7 @@ export class AgentManager extends EventEmitter {
       ...agent,
       ...request,
       updatedAt: new Date().toISOString(),
-    };
+    } as Agent;
 
     // Merge AI config if provided
     if (request.aiConfig) {
@@ -352,7 +526,7 @@ export class AgentManager extends EventEmitter {
     const session: ChatSession = {
       id: sessionId,
       agentId,
-      userId,
+      userId: userId || "",
       messages: [],
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -1082,7 +1256,7 @@ Please provide insights about what this event means and any recommended actions.
   /**
    * Get chat session
    */
-  getChatSession(sessionId: string): ChatSession | null {{
+  getChatSession(sessionId: string): ChatSession | null {
     const session = this.chatSessions.get(sessionId);
     if (session) return session;
 
@@ -1169,7 +1343,7 @@ class ValidationError extends Error implements ValidationError {
     this.code = code;
     this.field = field;
     this.value = value;
-    this.context = context;
+    this.context = context || {};
     this.timestamp = new Date().toISOString();
   }
 }
@@ -1187,10 +1361,9 @@ class ExecutionError extends Error implements ExecutionError {
     this.name = 'ExecutionError';
     this.agentId = agentId;
     this.code = code;
-    this.context = context;
+    this.context = context || {};
     this.timestamp = new Date().toISOString();
   }
 }
 
-export { AgentManager, ValidationError, ExecutionError };
 export default AgentManager;

@@ -136,7 +136,10 @@ export const createTablesSQL = `
 export function serializeEmbedding(embedding: number[]): Buffer {
   const buffer = Buffer.allocUnsafe(embedding.length * 4);
   for (let i = 0; i < embedding.length; i++) {
-    buffer.writeFloatLE(embedding[i], i * 4);
+    const value = embedding[i];
+    if (value !== undefined) {
+      buffer.writeFloatLE(value, i * 4);
+    }
   }
   return buffer;
 }
@@ -160,9 +163,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   let normB = 0;
 
   for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    const ai = a[i];
+    const bi = b[i];
+    if (ai !== undefined && bi !== undefined) {
+      dotProduct += ai * bi;
+      normA += ai * ai;
+      normB += bi * bi;
+    }
   }
 
   normA = Math.sqrt(normA);

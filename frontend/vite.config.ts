@@ -16,6 +16,7 @@ export default defineConfig({
       '@/types': resolve(__dirname, './src/types'),
       '@/utils': resolve(__dirname, './src/utils'),
       '@/pages': resolve(__dirname, './src/pages'),
+      buffer: 'buffer',
     },
   },
 
@@ -43,11 +44,15 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
     rollupOptions: {
+      external: [],
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
           solana: ['@solana/web3.js', '@solana/wallet-adapter-react'],
           ui: ['@headlessui/react', '@heroicons/react'],
+        },
+        globals: {
+          buffer: 'Buffer',
         },
       },
     },
@@ -60,6 +65,7 @@ export default defineConfig({
       '@solana/wallet-adapter-react',
       '@solana/wallet-adapter-react-ui',
       '@solana/wallet-adapter-wallets',
+      'buffer',
     ],
     exclude: ['@solana/wallet-adapter-phantom'],
   },

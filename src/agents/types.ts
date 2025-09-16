@@ -1,4 +1,4 @@
-import { PublicKey } from '@solana/web3.js';
+import type { PublicKey } from '@solana/web3.js';
 
 // Base Agent Types
 export interface Agent {
@@ -69,7 +69,11 @@ export type EventType =
   | 'price_alert'
   | 'custom_program'
   | 'webhook'
-  | 'scheduled';
+  | 'scheduled'
+  | 'token_price_change'
+  | 'trending_token'
+  | 'custom_event'
+  | 'dialect_generic_event';
 
 export interface EventCondition {
   field: string;

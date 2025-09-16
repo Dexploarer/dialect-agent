@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -9,18 +9,14 @@ import {
   EyeIcon,
   PlayIcon,
   PauseIcon,
-  CogIcon,
   ChartBarIcon,
   ClockIcon,
-  CheckCircleIcon,
-  ExclamationCircleIcon,
   BoltIcon,
-  SparklesIcon,
   UserGroupIcon,
   FunnelIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { useWallet } from '@solana/wallet-adapter-react';
+// import { useWallet } from '@solana/wallet-adapter-react';
 
 interface Agent {
   id: string;
@@ -50,90 +46,7 @@ interface Agent {
   actions: number;
 }
 
-// Mock data - replace with actual API calls
-const mockAgents: Agent[] = [
-  {
-    id: '1',
-    name: 'DeFi Monitor',
-    description: 'Monitors DeFi protocols and sends alerts for significant events',
-    avatar: '🏦',
-    isActive: true,
-    createdAt: '2024-01-15T10:30:00Z',
-    updatedAt: '2024-01-16T14:22:00Z',
-    userId: 'user-1',
-    aiConfig: {
-      model: 'gpt-4-turbo',
-      provider: 'openai',
-      temperature: 0.7,
-      maxTokens: 1000,
-      systemPrompt: 'You are a DeFi monitoring specialist...',
-    },
-    stats: {
-      totalTriggers: 145,
-      successfulExecutions: 142,
-      failedExecutions: 3,
-      averageResponseTime: 245,
-      lastActivity: '2 minutes ago',
-      uptime: 98.2,
-    },
-    eventTriggers: 5,
-    actions: 8,
-  },
-  {
-    id: '2',
-    name: 'Token Tracker',
-    description: 'Tracks token transfers and price movements across multiple DEXs',
-    avatar: '💰',
-    isActive: true,
-    createdAt: '2024-01-10T09:15:00Z',
-    updatedAt: '2024-01-16T11:45:00Z',
-    userId: 'user-1',
-    aiConfig: {
-      model: 'claude-3-sonnet',
-      provider: 'anthropic',
-      temperature: 0.5,
-      maxTokens: 800,
-      systemPrompt: 'You are a token tracking specialist...',
-    },
-    stats: {
-      totalTriggers: 89,
-      successfulExecutions: 87,
-      failedExecutions: 2,
-      averageResponseTime: 180,
-      lastActivity: '5 minutes ago',
-      uptime: 97.7,
-    },
-    eventTriggers: 3,
-    actions: 5,
-  },
-  {
-    id: '3',
-    name: 'NFT Watcher',
-    description: 'Monitors NFT marketplace activities and rare mint events',
-    avatar: '🖼️',
-    isActive: false,
-    createdAt: '2024-01-08T16:20:00Z',
-    updatedAt: '2024-01-15T08:30:00Z',
-    userId: 'user-1',
-    aiConfig: {
-      model: 'gpt-4',
-      provider: 'openai',
-      temperature: 0.8,
-      maxTokens: 1200,
-      systemPrompt: 'You are an NFT marketplace specialist...',
-    },
-    stats: {
-      totalTriggers: 23,
-      successfulExecutions: 20,
-      failedExecutions: 3,
-      averageResponseTime: 320,
-      lastActivity: '1 hour ago',
-      uptime: 87.0,
-    },
-    eventTriggers: 2,
-    actions: 4,
-  },
-];
+// No mock agents; list fetched from the backend.
 
 type FilterType = 'all' | 'active' | 'inactive';
 type SortType = 'name' | 'created' | 'activity' | 'performance';
@@ -322,8 +235,8 @@ function StatsOverview({ agents }: { agents: Agent[] }) {
 }
 
 export default function AgentManager() {
-  const { publicKey } = useWallet();
-  const [agents, setAgents] = useState<Agent[]>(mockAgents);
+  // const { publicKey } = useWallet();
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [sortType, setSortType] = useState<SortType>('name');
@@ -361,9 +274,10 @@ export default function AgentManager() {
     const fetchAgents = async () => {
       setIsLoading(true);
       try {
-        // const response = await fetch('/api/agents');
-        // const data = await response.json();
-        // setAgents(data.agents);
+        const response = await fetch('/api/agents');
+        const data = await response.json();
+        setAgents(data.agents);
+        console.log('Agents fetched:', data.agents);
       } catch (error) {
         console.error('Failed to fetch agents:', error);
       } finally {

@@ -43,9 +43,14 @@ A complete AI-powered application built with AI SDK 5, Bun, and SQLite with vect
 
 3. **Set up environment variables**
    ```bash
-   cp .env.example .env
+   cp env.example .env
    # Edit .env with your API keys and configuration
    ```
+
+   **Important**: This application is configured to use an AI Gateway instead of direct OpenAI API calls. Configure your AI Gateway settings:
+   - `AI_GATEWAY_URL`: Your AI Gateway endpoint (e.g., `https://your-gateway.com/v1`)
+   - `AI_GATEWAY_API_KEY`: Your AI Gateway API key
+   - `OPENAI_API_KEY`: Fallback OpenAI API key (optional)
 
 4. **Initialize the database**
    ```bash

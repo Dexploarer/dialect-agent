@@ -224,7 +224,7 @@ export class DatabaseManager {
    * Check if database is connected
    */
   isConnected(): boolean {
-    return this.db !== null && this.db.open;
+    return this.db !== null;
   }
 }
 

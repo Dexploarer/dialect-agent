@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Size Test</title>
+    <style>
+        /* Reset everything */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            font-size: 16px;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 1rem;
+            line-height: 1.5;
+            padding: 20px;
+        }
+        
+        .test-box {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+            background: #f9f9f9;
+        }
+        
+        .size-14 { font-size: 14px; }
+        .size-16 { font-size: 16px; }
+        .size-18 { font-size: 18px; }
+        .size-20 { font-size: 20px; }
+        
+        .small-text { font-size: 0.875rem; }
+        .normal-text { font-size: 1rem; }
+        .large-text { font-size: 1.25rem; }
+    </style>
+</head>
+<body>
+    <h1>Font Size Test</h1>
+    <p>This page tests if fonts are displaying at normal sizes.</p>
+    
+    <div class="test-box">
+        <h3>Pixel Sizes:</h3>
+        <p class="size-14">14px - Small text (should be quite small)</p>
+        <p class="size-16">16px - Normal text (should be readable but not large)</p>
+        <p class="size-18">18px - Slightly larger (should be noticeably bigger)</p>
+        <p class="size-20">20px - Large text (should be clearly large)</p>
+    </div>
+    
+    <div class="test-box">
+        <h3>REM Sizes:</h3>
+        <p class="small-text">0.875rem - Small text</p>
+        <p class="normal-text">1rem - Normal text</p>
+        <p class="large-text">1.25rem - Large text</p>
+    </div>
+    
+    <div class="test-box">
+        <h3>Expected Results:</h3>
+        <ul>
+            <li>14px text should be small but readable</li>
+            <li>16px text should be normal reading size</li>
+            <li>20px text should be noticeably larger</li>
+            <li>If ALL text appears huge, there's a browser zoom issue</li>
+        </ul>
+    </div>
+    
+    <div class="test-box">
+        <h3>Browser Check:</h3>
+        <p>Browser zoom: <span id="zoom">Checking...</span></p>
+        <p>Device pixel ratio: <span id="dpr">Checking...</span></p>
+        <p>Screen width: <span id="width">Checking...</span></p>
+    </div>
+    
+    <script>
+        document.getElementById('zoom').textContent = Math.round(window.devicePixelRatio * 100) + '%';
+        document.getElementById('dpr').textContent = window.devicePixelRatio;
+        document.getElementById('width').textContent = window.innerWidth + 'px';
+        
+        // Check if zoom is not 100%
+        if (window.devicePixelRatio !== 1) {
+            const warning = document.createElement('div');
+            warning.style.background = '#ffcc00';
+            warning.style.padding = '10px';
+            warning.style.margin = '10px 0';
+            warning.innerHTML = '<strong>Warning:</strong> Browser zoom is not 100%. This might cause oversized appearance. Try Ctrl+0 (Cmd+0 on Mac) to reset zoom.';
+            document.body.insertBefore(warning, document.body.firstChild);
+        }
+    </script>
+</body>
+</html>

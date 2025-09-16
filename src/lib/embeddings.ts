@@ -18,6 +18,7 @@ export interface EmbeddingConfig {
   chunkOverlap: number;
   provider: "openai";
   apiKey?: string;
+  aiGatewayUrl?: string;
   dimensions: number;
 }
 
@@ -60,7 +61,8 @@ export class EmbeddingService {
       chunkSize: 500,
       chunkOverlap: 50,
       provider: "openai",
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.AI_GATEWAY_API_KEY || "",
+      aiGatewayUrl: process.env.AI_GATEWAY_URL || "",
       dimensions: modelDimensions,
       ...config,
     };
@@ -90,13 +92,13 @@ export class EmbeddingService {
       );
 
       if (!this.config.apiKey) {
-        throw new Error("OpenAI API key is required for embeddings");
+        console.warn("⚠️ OpenAI API key not configured for embeddings");
+        console.warn("⚠️ Embedding features will be disabled");
+        return;
       }
 
-      // Initialize the OpenAI embedding model
-      this.embeddingModel = openai.textEmbedding(this.config.model, {
-        apiKey: this.config.apiKey,
-      });
+      // Initialize the embedding model
+      this.embeddingModel = openai.embedding(this.config.model);
 
       this.isInitialized = true;
       console.log("Embedding service initialized successfully");
@@ -199,7 +201,7 @@ export class EmbeddingService {
           content: text,
           startIndex: 0,
           endIndex: text.length,
-          metadata,
+          metadata: metadata || {},
         },
       ];
     }
@@ -220,7 +222,7 @@ export class EmbeddingService {
         content: chunkText,
         startIndex,
         endIndex,
-        metadata,
+        metadata: metadata || {},
       });
 
       // Calculate next starting point with overlap
@@ -259,7 +261,10 @@ export class EmbeddingService {
       // Store embeddings in database
       for (let index = 0; index < chunks.length; index++) {
         const chunk = chunks[index];
-        const embeddingData = serializeEmbedding(embeddings[index]);
+        const embedding = embeddings[index];
+        if (!chunk || !embedding) continue;
+        
+        const embeddingData = serializeEmbedding(embedding);
         const metadataJson = JSON.stringify(chunk.metadata || {});
 
         dbManager.run(

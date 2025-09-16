@@ -14,6 +14,8 @@ import {
   MoonIcon,
   BellIcon,
   UserCircleIcon,
+  BoltIcon,
+  CodeBracketIcon,
 } from '@heroicons/react/24/outline';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -53,6 +55,18 @@ const navigation: NavigationItem[] = [
     href: '/events',
     icon: ChartBarIcon,
     description: 'Blockchain event monitor',
+  },
+  {
+    name: 'Dialect',
+    href: '/dialect',
+    icon: BoltIcon,
+    description: 'Dialect integration',
+  },
+  {
+    name: 'MCP Service',
+    href: '/dialect/mcp',
+    icon: CodeBracketIcon,
+    description: 'Dialect MCP integration',
   },
   {
     name: 'Settings',
@@ -99,7 +113,7 @@ function ThemeToggle() {
 }
 
 function NotificationBell() {
-  const [hasNotifications, setHasNotifications] = useState(false);
+  const [hasNotifications] = useState(false);
 
   return (
     <button className="relative p-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition-colors">
@@ -186,17 +200,17 @@ function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) 
         initial={false}
         animate={isOpen ? 'open' : 'closed'}
         variants={sidebarVariants}
-        className="fixed left-0 top-0 h-full w-64 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 z-50 lg:relative lg:translate-x-0 lg:z-0"
+        className="fixed left-0 top-0 h-full w-64 sidebar z-50 lg:relative lg:translate-x-0 lg:z-0"
       >
         <div className="flex flex-col h-full">
           {/* Logo and close button */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
+          <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-accent-500 rounded-lg flex items-center justify-center">
                 <BeakerIcon className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-lg text-gray-900 dark:text-white">
+                <h1 className="font-semibold text-base text-gray-900 dark:text-white">
                   AI Agents
                 </h1>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
@@ -220,7 +234,11 @@ function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) 
                 <Link
                   key={item.name}
                   to={item.href}
-                  onClick={onClose}
+                  onClick={() => {
+                    if (window.innerWidth < 1024) {
+                      onClose();
+                    }
+                  }}
                   className={`
                     flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 group
                     ${isActive
@@ -282,12 +300,13 @@ function Header({ onMenuClick }: { onMenuClick: () => void }) {
           <button
             onClick={onMenuClick}
             className="lg:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            data-sidebar-toggle
           >
             <Bars3Icon className="w-6 h-6 text-gray-600 dark:text-gray-300" />
           </button>
 
           <div className="hidden sm:block">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h2 className="text-base font-medium text-gray-900 dark:text-white">
               AI Agent Dashboard
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -319,10 +338,26 @@ export default function Layout({ children }: LayoutProps) {
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
   const closeSidebar = () => setSidebarOpen(false);
 
-  // Close sidebar on route change
+  // Set initial sidebar state based on screen size
+  useEffect(() => {
+    const handleResize = () => {
+      setSidebarOpen(window.innerWidth >= 1024);
+    };
+    
+    // Set initial state
+    handleResize();
+    
+    // Listen for resize events
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Close sidebar on route change (mobile only)
   const location = useLocation();
   useEffect(() => {
-    closeSidebar();
+    if (window.innerWidth < 1024) {
+      closeSidebar();
+    }
   }, [location.pathname]);
 
   // Close sidebar when clicking outside on mobile
@@ -354,15 +389,13 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Page content */}
           <main className="flex-1 overflow-auto">
-            <div className="p-6">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, ease: 'easeOut' }}
-              >
-                {children}
-              </motion.div>
-            </div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+            >
+              {children}
+            </motion.div>
           </main>
         </div>
       </div>

@@ -51,86 +51,7 @@ interface Agent {
   };
 }
 
-// Mock data - replace with actual API calls
-const mockStats: DashboardStats = {
-  totalAgents: 12,
-  activeAgents: 8,
-  totalExecutions: 1247,
-  successfulExecutions: 1198,
-  eventsProcessed: 3456,
-  averageResponseTime: 245,
-  uptime: 99.8,
-};
-
-const mockRecentActivity: RecentActivity[] = [
-  {
-    id: '1',
-    type: 'agent_created',
-    message: 'New agent "DeFi Monitor" created',
-    timestamp: '2 minutes ago',
-    agentName: 'DeFi Monitor',
-    status: 'success',
-  },
-  {
-    id: '2',
-    type: 'execution_success',
-    message: 'Token transfer alert triggered successfully',
-    timestamp: '5 minutes ago',
-    agentName: 'Token Tracker',
-    status: 'success',
-  },
-  {
-    id: '3',
-    type: 'event_processed',
-    message: 'Processed 15 Dialect events',
-    timestamp: '10 minutes ago',
-    status: 'success',
-  },
-  {
-    id: '4',
-    type: 'execution_failed',
-    message: 'Webhook action failed - timeout',
-    timestamp: '15 minutes ago',
-    agentName: 'Price Alert Bot',
-    status: 'error',
-  },
-];
-
-const mockAgents: Agent[] = [
-  {
-    id: '1',
-    name: 'DeFi Monitor',
-    isActive: true,
-    stats: {
-      totalTriggers: 145,
-      successfulExecutions: 142,
-      failedExecutions: 3,
-      lastActivity: '2 minutes ago',
-    },
-  },
-  {
-    id: '2',
-    name: 'Token Tracker',
-    isActive: true,
-    stats: {
-      totalTriggers: 89,
-      successfulExecutions: 87,
-      failedExecutions: 2,
-      lastActivity: '5 minutes ago',
-    },
-  },
-  {
-    id: '3',
-    name: 'Price Alert Bot',
-    isActive: false,
-    stats: {
-      totalTriggers: 23,
-      successfulExecutions: 20,
-      failedExecutions: 3,
-      lastActivity: '1 hour ago',
-    },
-  },
-];
+// No mock data. Values are fetched from the backend.
 
 function StatCard({
   title,
@@ -160,12 +81,12 @@ function StatCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-600 transition-all duration-200 hover:shadow-lg"
+      className="stat-card hover:shadow-md transition-all duration-200"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">{value}</p>
+          <p className="stat-label mb-1">{title}</p>
+          <p className="stat-value">{value}</p>
           {change && (
             <div className="flex items-center mt-2">
               {changeType === 'increase' ? (
@@ -359,17 +280,39 @@ function QuickActions() {
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState<DashboardStats>(mockStats);
-  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>(mockRecentActivity);
-  const [agents, setAgents] = useState<Agent[]>(mockAgents);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
-    // TODO: Fetch real data from API
     const fetchDashboardData = async () => {
       try {
-        // const response = await fetch('/api/stats');
-        // const data = await response.json();
-        // setStats(data.stats);
+        const [statsRes, eventsRes, agentsRes] = await Promise.all([
+          fetch('/api/stats'),
+          fetch('/api/events?limit=10'),
+          fetch('/api/agents')
+        ]);
+
+        if (statsRes.ok) {
+          const s = await statsRes.json();
+          setStats(s.stats ?? s);
+        }
+        if (eventsRes.ok) {
+          const e = await eventsRes.json();
+          const activities: RecentActivity[] = (e.events ?? e).map((ev: any, idx: number) => ({
+            id: ev.id ?? String(idx),
+            type: (ev.type as any) ?? 'event_processed',
+            message: ev.parsedData?.content ? `Message: ${ev.parsedData.content}` : `Event ${ev.type}`,
+            timestamp: new Date(ev.timestamp ?? Date.now()).toLocaleTimeString(),
+            status: ev.processingError ? 'error' : (ev.processed ? 'success' : 'warning'),
+            agentName: ev.agentIds?.[0],
+          }));
+          setRecentActivity(activities);
+        }
+        if (agentsRes.ok) {
+          const ag = await agentsRes.json();
+          setAgents(ag.agents ?? ag);
+        }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
       }
@@ -382,17 +325,19 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const successRate = Math.round((stats.successfulExecutions / stats.totalExecutions) * 100);
+  const successRate = stats && stats.totalExecutions > 0
+    ? Math.round((stats.successfulExecutions / stats.totalExecutions) * 100)
+    : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 space-y-4 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
             Dashboard
           </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
             Overview of your AI agents and blockchain monitoring
           </p>
         </div>
@@ -405,7 +350,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Agents"
           value={stats.totalAgents}
@@ -450,17 +395,17 @@ export default function Dashboard() {
       </div>
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Recent Activity */}
         <div className="lg:col-span-2">
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                <FireIcon className="w-5 h-5 text-orange-500" />
+          <div className="card rounded-lg">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-base font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                <FireIcon className="w-4 h-4 text-orange-500" />
                 Recent Activity
-              </h2>
+              </h3>
             </div>
-            <div className="p-6 space-y-1 max-h-96 overflow-y-auto">
+            <div className="p-4 space-y-1 max-h-80 overflow-y-auto scrollbar-thin">
               {recentActivity.map((activity) => (
                 <ActivityItem key={activity.id} activity={activity} />
               ))}

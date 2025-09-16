@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChartBarIcon,
@@ -16,7 +16,6 @@ import {
   FireIcon,
   SparklesIcon,
   BeakerIcon,
-  UserIcon,
   CurrencyDollarIcon,
   PhotoIcon,
 } from '@heroicons/react/24/outline';
@@ -48,92 +47,7 @@ interface MonitoringStats {
 
 type EventFilter = 'all' | 'dialect_message' | 'token_transfer' | 'account_balance_change' | 'nft_mint' | 'nft_transfer' | 'defi_transaction';
 
-// Mock data
-const mockStats: MonitoringStats = {
-  eventsReceived: 15847,
-  eventsProcessed: 15823,
-  eventsFailed: 24,
-  uptime: 99.85,
-  subscriptions: 12,
-  triggers: 23,
-  isConnected: true,
-  lastEventTime: Date.now() - 2000,
-};
-
-const mockEvents: BlockchainEvent[] = [
-  {
-    id: '1',
-    type: 'token_transfer',
-    timestamp: new Date(Date.now() - 30000).toISOString(),
-    signature: 'abc123def456ghi789jkl012mno345pqr678stu901vwx234yz',
-    slot: 245678901,
-    blockTime: Date.now() - 30000,
-    parsedData: {
-      mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-      source: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
-      destination: '8UJgxaiQx5nTuDqd4d4D8V9RvYu5JQQyXYYYX8oX8oXY',
-      amount: 1500000000,
-      decimals: 6,
-      symbol: 'USDC',
-    },
-    processed: true,
-    agentTriggered: true,
-    agentIds: ['agent-1'],
-  },
-  {
-    id: '2',
-    type: 'nft_mint',
-    timestamp: new Date(Date.now() - 45000).toISOString(),
-    signature: 'def456ghi789jkl012mno345pqr678stu901vwx234yzabc123',
-    slot: 245678900,
-    blockTime: Date.now() - 45000,
-    parsedData: {
-      mint: '7XYZ789ABC012DEF345GHI678JKL901MNO234PQR567STU890',
-      metadata: {
-        name: 'Cool NFT #1234',
-        symbol: 'COOL',
-        uri: 'https://example.com/metadata/1234.json',
-      },
-      recipient: '5UJgxaiQx5nTuDqd4d4D8V9RvYu5JQQyXYYYX8oX8oXY',
-    },
-    processed: true,
-    agentTriggered: false,
-  },
-  {
-    id: '3',
-    type: 'dialect_message',
-    timestamp: new Date(Date.now() - 60000).toISOString(),
-    signature: 'ghi789jkl012mno345pqr678stu901vwx234yzabc123def456',
-    slot: 245678899,
-    blockTime: Date.now() - 60000,
-    parsedData: {
-      messageId: 'msg_abc123',
-      sender: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
-      recipient: '8UJgxaiQx5nTuDqd4d4D8V9RvYu5JQQyXYYYX8oX8oXY',
-      content: 'Hello from Dialect!',
-      encrypted: false,
-    },
-    processed: true,
-    agentTriggered: true,
-    agentIds: ['agent-2'],
-  },
-  {
-    id: '4',
-    type: 'account_balance_change',
-    timestamp: new Date(Date.now() - 75000).toISOString(),
-    signature: 'account_change_event',
-    slot: 245678898,
-    blockTime: Date.now() - 75000,
-    parsedData: {
-      account: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
-      lamports: 2500000000,
-      previous_lamports: 2000000000,
-      change: 500000000,
-    },
-    processed: false,
-    processingError: 'Agent processing timeout',
-  },
-];
+// No mock data in production UI.
 
 function EventTypeIcon({ type }: { type: BlockchainEvent['type'] }) {
   const iconProps = { className: 'w-5 h-5' };
@@ -346,8 +260,17 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
 }
 
 export default function EventMonitor() {
-  const [events, setEvents] = useState<BlockchainEvent[]>(mockEvents);
-  const [stats, setStats] = useState<MonitoringStats>(mockStats);
+  const [events, setEvents] = useState<BlockchainEvent[]>([]);
+  const [stats, setStats] = useState<MonitoringStats>({
+    eventsReceived: 0,
+    eventsProcessed: 0,
+    eventsFailed: 0,
+    uptime: 0,
+    subscriptions: 0,
+    triggers: 0,
+    isConnected: false,
+    lastEventTime: Date.now(),
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [eventFilter, setEventFilter] = useState<EventFilter>('all');
   const [isConnected, setIsConnected] = useState(true);
@@ -363,27 +286,28 @@ export default function EventMonitor() {
   });
 
   useEffect(() => {
-    // TODO: Setup WebSocket connection for real-time events
+    // Setup WebSocket connection for real-time events (backend should provide this)
     const connectWebSocket = () => {
-      // const ws = new WebSocket('ws://localhost:3000/events');
+      // Example (enable once backend WS endpoint is available):
+      // const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events/ws`);
       // ws.onmessage = (event) => {
-      //   const eventData = JSON.parse(event.data);
-      //   setEvents(prev => [eventData, ...prev.slice(0, 99)]);
+      //   const eventData: BlockchainEvent = JSON.parse(event.data);
+      //   setEvents(prev => [eventData, ...prev].slice(0, 100));
       // };
     };
 
-    // TODO: Fetch initial data
+    // Fetch initial data
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        // const [eventsRes, statsRes] = await Promise.all([
-        //   fetch('/api/events?limit=50'),
-        //   fetch('/api/events/status')
-        // ]);
-        // const eventsData = await eventsRes.json();
-        // const statsData = await statsRes.json();
-        // setEvents(eventsData.events);
-        // setStats(statsData.monitoring);
+        const [eventsRes, statsRes] = await Promise.all([
+          fetch('/api/events?limit=50'),
+          fetch('/api/events/status')
+        ]);
+        const eventsData = await eventsRes.json();
+        const statsData = await statsRes.json();
+        setEvents(eventsData.events ?? eventsData);
+        setStats(statsData.monitoring ?? statsData);
       } catch (error) {
         console.error('Failed to fetch event data:', error);
         setIsConnected(false);
@@ -395,17 +319,7 @@ export default function EventMonitor() {
     fetchData();
     connectWebSocket();
 
-    // Simulate real-time updates
-    const interval = setInterval(() => {
-      setStats(prev => ({
-        ...prev,
-        lastEventTime: Date.now(),
-        eventsReceived: prev.eventsReceived + Math.floor(Math.random() * 3),
-        eventsProcessed: prev.eventsProcessed + Math.floor(Math.random() * 2),
-      }));
-    }, 5000);
-
-    return () => clearInterval(interval);
+    return () => {};
   }, []);
 
   return (

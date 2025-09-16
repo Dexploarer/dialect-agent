@@ -22,7 +22,7 @@ export function ThemeProvider({
   storageKey = 'theme'
 }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<'light' | 'dark'>('light');
-  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>('light');
+  const [systemTheme] = useState<'light' | 'dark'>('light');
   const [isSystemTheme, setIsSystemTheme] = useState(defaultTheme === 'system');
 
   // Detect system theme preference
@@ -30,7 +30,7 @@ export function ThemeProvider({
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const updateSystemTheme = (e: MediaQueryListEvent) => {
       const newSystemTheme = e.matches ? 'dark' : 'light';
-      setSystemTheme(newSystemTheme);
+      setThemeState(newSystemTheme);
 
       // Update theme if using system preference
       if (isSystemTheme) {
@@ -41,7 +41,7 @@ export function ThemeProvider({
 
     // Set initial system theme
     const initialSystemTheme = mediaQuery.matches ? 'dark' : 'light';
-    setSystemTheme(initialSystemTheme);
+    setThemeState(initialSystemTheme);
 
     // Listen for system theme changes
     mediaQuery.addEventListener('change', updateSystemTheme);
@@ -109,16 +109,16 @@ export function ThemeProvider({
     localStorage.setItem(storageKey, newTheme);
   };
 
-  const setSystemTheme = (useSystem: boolean = true) => {
-    setIsSystemTheme(useSystem);
+  // const setSystemThemePreference = (useSystem: boolean = true) => {
+  //   setIsSystemTheme(useSystem);
 
-    if (useSystem) {
-      const currentSystemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      setThemeState(currentSystemTheme);
-      applyTheme(currentSystemTheme);
-      localStorage.setItem(storageKey, 'system');
-    }
-  };
+  //   if (useSystem) {
+  //     const currentSystemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  //     setThemeState(currentSystemTheme);
+  //     applyTheme(currentSystemTheme);
+  //     localStorage.setItem(storageKey, 'system');
+  //   }
+  // };
 
   const toggleTheme = () => {
     if (isSystemTheme) {

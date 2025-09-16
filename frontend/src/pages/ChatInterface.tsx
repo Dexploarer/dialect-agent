@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   PaperAirplaneIcon,
@@ -7,7 +7,6 @@ import {
   ExclamationCircleIcon,
   ClockIcon,
   CheckIcon,
-  EllipsisHorizontalIcon,
   ArrowPathIcon,
   PlusIcon,
   CogIcon,
@@ -43,14 +42,14 @@ interface ChatMessage {
   };
 }
 
-interface ChatSession {
-  id: string;
-  agentId: string;
-  messages: ChatMessage[];
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+// interface ChatSession {
+//   id: string;
+//   agentId: string;
+//   messages: ChatMessage[];
+//   isActive: boolean;
+//   createdAt: string;
+//   updatedAt: string;
+// }
 
 // Mock data
 const mockAgents: Agent[] = [
@@ -465,7 +464,7 @@ export default function ChatInterface() {
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
-  const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
+  // const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
 
   const handleSelectAgent = async (agent: Agent) => {
     if (!agent.isActive || !agent.isOnline) return;

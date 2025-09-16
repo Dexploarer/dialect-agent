@@ -88,7 +88,7 @@ export class StringUtils {
       '"': '&quot;',
       "'": '&#39;',
     };
-    return text.replace(/[&<>"']/g, m => map[m]);
+    return text.replace(/[&<>"']/g, m => map[m] || m);
   }
 }
 
@@ -212,7 +212,11 @@ export class ArrayUtils {
     const result = [...array];
     for (let i = result.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [result[i], result[j]] = [result[j], result[i]];
+      const temp = result[i];
+      if (temp !== undefined && result[j] !== undefined) {
+        result[i] = result[j];
+        result[j] = temp;
+      }
     }
     return result;
   }
@@ -266,7 +270,9 @@ export class ObjectUtils {
       for (const key in source) {
         if (ObjectUtils.isObject(source[key])) {
           if (!target[key]) Object.assign(target, { [key]: {} });
-          ObjectUtils.deepMerge(target[key], source[key]);
+          if (source[key] !== undefined) {
+            ObjectUtils.deepMerge(target[key], source[key] as any);
+          }
         } else {
           Object.assign(target, { [key]: source[key] });
         }
@@ -287,7 +293,7 @@ export class ObjectUtils {
    * Get nested property value
    */
   static getNestedValue<T = any>(obj: Record<string, any>, path: string): T | undefined {
-    return path.split('.').reduce((current, key) => current?.[key], obj);
+    return path.split('.').reduce((current: any, key) => current?.[key], obj) as T;
   }
 
   /**
@@ -612,7 +618,10 @@ export class MathUtils {
     if (a.length !== b.length) {
       throw new Error('Vectors must have the same length');
     }
-    return a.reduce((sum, ai, i) => sum + ai * b[i], 0);
+    return a.reduce((sum, ai, i) => {
+      const bi = b[i];
+      return bi !== undefined ? sum + ai * bi : sum;
+    }, 0);
   }
 
   /**
@@ -752,18 +761,3 @@ export const Utils = {
   Retry: RetryUtils,
 };
 
-// Export individual utilities as well
-export {
-  StringUtils,
-  DateUtils,
-  ArrayUtils,
-  ObjectUtils,
-  EnvUtils,
-  FileUtils,
-  ValidationUtils,
-  CryptoUtils,
-  PerformanceUtils,
-  MathUtils,
-  ErrorUtils,
-  RetryUtils,
-};

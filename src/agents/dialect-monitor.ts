@@ -1,15 +1,11 @@
-import { PublicKey, Connection, clusterApiUrl } from '@solana/web3.js';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
-import {
+import type {
   SolanaEvent,
   DialectEvent,
   TokenTransferEvent,
   EventTrigger,
   EventType,
-  WebSocketMessage,
-  EventMessage,
-  StatusMessage,
   DialectSubscription,
   EventCondition,
 } from './types.js';
@@ -18,7 +14,7 @@ export interface DialectMonitorConfig {
   solanaRpcUrl: string;
   solanaWsUrl: string;
   dialectApiUrl: string;
-  dialectWebSocketUrl: string;
+  dialectWebhookUrl: string;
   apiKey?: string;
   reconnectInterval: number;
   maxReconnectAttempts: number;
@@ -26,10 +22,31 @@ export interface DialectMonitorConfig {
   eventBufferSize: number;
 }
 
+export interface DialectWebhookEvent {
+  event: string;
+  token?: {
+    symbol: string;
+    address: string;
+    name?: string;
+  };
+  change?: {
+    direction: 'up' | 'down';
+    percentage_change: number;
+    price_before: number;
+    price_after: number;
+  };
+  trigger?: {
+    window: {
+      duration: string;
+    };
+    threshold: number;
+  };
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
 export class DialectEventMonitor extends EventEmitter {
   private config: DialectMonitorConfig;
-  private solanaConnection: Connection;
-  private dialectWs: WebSocket | null = null;
   private solanaWs: WebSocket | null = null;
 
   private subscriptions = new Map<string, DialectSubscription>();
@@ -54,21 +71,16 @@ export class DialectEventMonitor extends EventEmitter {
     super();
 
     this.config = {
-      solanaRpcUrl: process.env.SOLANA_RPC_URL || clusterApiUrl('devnet'),
+      solanaRpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
       solanaWsUrl: process.env.SOLANA_WS_URL || 'wss://api.devnet.solana.com',
       dialectApiUrl: process.env.DIALECT_API_URL || 'https://api.dialect.to',
-      dialectWebSocketUrl: process.env.DIALECT_WS_URL || 'wss://api.dialect.to/ws',
+      dialectWebhookUrl: process.env.DIALECT_WEBHOOK_URL || '/api/webhooks/dialect',
       reconnectInterval: 5000,
       maxReconnectAttempts: 10,
       heartbeatInterval: 30000,
       eventBufferSize: 1000,
       ...config,
     };
-
-    this.solanaConnection = new Connection(this.config.solanaRpcUrl, {
-      commitment: 'confirmed',
-      wsEndpoint: this.config.solanaWsUrl,
-    });
 
     this.setupEventHandlers();
   }
@@ -80,17 +92,28 @@ export class DialectEventMonitor extends EventEmitter {
     console.log('🚀 Starting Dialect Event Monitor...');
 
     try {
-      await this.connectDialect();
-      await this.connectSolana();
+      // Start our webhook endpoint to receive Dialect events
+      this.setupDialectWebhook();
+
+      // Try to connect to Solana, but don't fail if it's not available
+      try {
+        await this.connectSolana();
+      } catch (solanaError) {
+        console.warn('⚠️ Solana WebSocket connection failed, continuing without Solana monitoring:', solanaError);
+        // Continue without Solana connection
+      }
+
       this.startHeartbeat();
 
       console.log('✅ Dialect Event Monitor started successfully');
+      console.log(`📡 Webhook endpoint ready at: ${this.config.dialectWebhookUrl}`);
       this.emit('started');
 
     } catch (error) {
       console.error('❌ Failed to start Dialect Event Monitor:', error);
       this.emit('error', error);
-      throw error;
+      // Don't throw error - let server continue without monitoring
+      console.warn('⚠️ Continuing server startup without event monitoring...');
     }
   }
 
@@ -112,11 +135,6 @@ export class DialectEventMonitor extends EventEmitter {
       this.reconnectTimer = null;
     }
 
-    if (this.dialectWs) {
-      this.dialectWs.close();
-      this.dialectWs = null;
-    }
-
     if (this.solanaWs) {
       this.solanaWs.close();
       this.solanaWs = null;
@@ -127,16 +145,87 @@ export class DialectEventMonitor extends EventEmitter {
   }
 
   /**
+   * Process incoming Dialect webhook events
+   */
+  processDialectWebhook(webhookData: DialectWebhookEvent[]): void {
+    console.log(`📨 Received ${webhookData.length} Dialect webhook events`);
+
+    for (const webhookEvent of webhookData) {
+      try {
+        // Convert Dialect webhook event to our internal format
+        const event = this.convertWebhookToEvent(webhookEvent);
+        
+        // Add to buffer
+        this.addToEventBuffer(event);
+
+        // Update statistics
+        this.stats.eventsReceived++;
+        this.stats.lastEventTime = Date.now();
+
+        // Emit for processing
+        this.emit('event', event);
+
+        console.log(`📊 Processed Dialect event: ${webhookEvent.event} for ${webhookEvent.token?.symbol || 'unknown token'}`);
+
+      } catch (error) {
+        console.error('❌ Failed to process Dialect webhook event:', error);
+        this.stats.eventsFailed++;
+        this.emit('error', error);
+      }
+    }
+  }
+
+  /**
+   * Convert Dialect webhook event to internal event format
+   */
+  private convertWebhookToEvent(webhookEvent: DialectWebhookEvent): SolanaEvent {
+    const eventId = `dialect-${webhookEvent.event}-${Date.now()}`;
+    
+    return {
+      id: eventId,
+      type: this.mapDialectEventType(webhookEvent.event),
+      timestamp: webhookEvent.timestamp,
+      signature: 'dialect-webhook',
+      slot: 0,
+      blockTime: new Date(webhookEvent.timestamp).getTime() / 1000,
+      transaction: {
+        signatures: [],
+        message: {
+          accountKeys: [],
+          instructions: [],
+        },
+      },
+      parsedData: {
+        dialectEvent: webhookEvent.event,
+        token: webhookEvent.token,
+        change: webhookEvent.change,
+        trigger: webhookEvent.trigger,
+        data: webhookEvent.data,
+      },
+      processed: false,
+    };
+  }
+
+  /**
+   * Map Dialect event types to our internal event types
+   */
+  private mapDialectEventType(dialectEvent: string): EventType {
+    switch (dialectEvent) {
+      case 'token_price_change':
+        return 'token_price_change';
+      case 'trending_token':
+        return 'trending_token';
+      default:
+        return 'custom_event';
+    }
+  }
+
+  /**
    * Add subscription for monitoring specific accounts/programs
    */
   addSubscription(subscription: DialectSubscription): void {
     console.log(`📡 Adding subscription: ${subscription.name}`);
     this.subscriptions.set(subscription.id, subscription);
-
-    if (this.isConnected) {
-      this.sendSubscriptionUpdate();
-    }
-
     this.emit('subscription_added', subscription);
   }
 
@@ -148,11 +237,6 @@ export class DialectEventMonitor extends EventEmitter {
     if (subscription) {
       console.log(`📡 Removing subscription: ${subscription.name}`);
       this.subscriptions.delete(subscriptionId);
-
-      if (this.isConnected) {
-        this.sendSubscriptionUpdate();
-      }
-
       this.emit('subscription_removed', subscription);
     }
   }
@@ -198,48 +282,12 @@ export class DialectEventMonitor extends EventEmitter {
   }
 
   /**
-   * Connect to Dialect WebSocket
+   * Setup Dialect webhook endpoint (this will be handled by the main server)
    */
-  private async connectDialect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      console.log('🔌 Connecting to Dialect WebSocket...');
-
-      const headers: Record<string, string> = {};
-      if (this.config.apiKey) {
-        headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-      }
-
-      this.dialectWs = new WebSocket(this.config.dialectWebSocketUrl, { headers });
-
-      this.dialectWs.on('open', () => {
-        console.log('✅ Connected to Dialect WebSocket');
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        this.sendSubscriptionUpdate();
-        resolve();
-      });
-
-      this.dialectWs.on('message', (data: WebSocket.Data) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(data.toString());
-          this.handleDialectMessage(message);
-        } catch (error) {
-          console.error('❌ Failed to parse Dialect message:', error);
-          this.emit('error', error);
-        }
-      });
-
-      this.dialectWs.on('close', (code: number, reason: Buffer) => {
-        console.log(`🔌 Dialect WebSocket closed: ${code} - ${reason.toString()}`);
-        this.isConnected = false;
-        this.scheduleReconnect();
-      });
-
-      this.dialectWs.on('error', (error: Error) => {
-        console.error('❌ Dialect WebSocket error:', error);
-        reject(error);
-      });
-    });
+  private setupDialectWebhook(): void {
+    console.log('🔌 Dialect webhook endpoint configured');
+    console.log(`📡 Webhook URL: ${this.config.dialectWebhookUrl}`);
+    console.log('💡 Register this webhook URL with Dialect to receive events');
   }
 
   /**
@@ -251,8 +299,19 @@ export class DialectEventMonitor extends EventEmitter {
 
       this.solanaWs = new WebSocket(this.config.solanaWsUrl);
 
+      // Set a timeout for connection
+      const timeout = setTimeout(() => {
+        if (!this.isConnected) {
+          console.warn('⚠️ Solana WebSocket connection timeout (continuing without real-time data)');
+          this.solanaWs?.close();
+          resolve(); // Don't reject, just continue
+        }
+      }, 5000);
+
       this.solanaWs.on('open', () => {
         console.log('✅ Connected to Solana WebSocket');
+        this.isConnected = true;
+        clearTimeout(timeout);
         this.subscribeSolanaEvents();
         resolve();
       });
@@ -268,12 +327,14 @@ export class DialectEventMonitor extends EventEmitter {
 
       this.solanaWs.on('close', () => {
         console.log('🔌 Solana WebSocket closed');
+        this.isConnected = false;
         this.scheduleReconnect();
       });
 
       this.solanaWs.on('error', (error: Error) => {
-        console.error('❌ Solana WebSocket error:', error);
-        reject(error);
+        console.warn('⚠️ Solana WebSocket error (continuing without real-time data):', error);
+        clearTimeout(timeout);
+        resolve(); // Don't reject, just continue without WebSocket
       });
     });
   }
@@ -307,27 +368,6 @@ export class DialectEventMonitor extends EventEmitter {
   }
 
   /**
-   * Handle Dialect WebSocket messages
-   */
-  private handleDialectMessage(message: WebSocketMessage): void {
-    switch (message.type) {
-      case 'event':
-        this.handleDialectEvent(message as EventMessage);
-        break;
-      case 'status':
-        this.handleStatusMessage(message as StatusMessage);
-        break;
-      case 'error':
-        console.error('❌ Dialect error:', message.payload);
-        this.emit('error', new Error(message.payload.message));
-        break;
-      case 'ping':
-        this.sendPong();
-        break;
-    }
-  }
-
-  /**
    * Handle Solana WebSocket messages
    */
   private handleSolanaMessage(message: any): void {
@@ -335,23 +375,6 @@ export class DialectEventMonitor extends EventEmitter {
       const { subscription, result } = message.params;
       this.handleSolanaAccountChange(subscription, result);
     }
-  }
-
-  /**
-   * Handle Dialect events
-   */
-  private handleDialectEvent(message: EventMessage): void {
-    const event = message.payload;
-
-    // Add to buffer
-    this.addToEventBuffer(event);
-
-    // Update statistics
-    this.stats.eventsReceived++;
-    this.stats.lastEventTime = Date.now();
-
-    // Emit for processing
-    this.emit('event', event);
   }
 
   /**
@@ -392,14 +415,6 @@ export class DialectEventMonitor extends EventEmitter {
     this.addToEventBuffer(event);
     this.stats.eventsReceived++;
     this.emit('event', event);
-  }
-
-  /**
-   * Handle status messages from Dialect
-   */
-  private handleStatusMessage(message: StatusMessage): void {
-    console.log('📊 Dialect status:', message.payload);
-    this.emit('status', message.payload);
   }
 
   /**
@@ -456,10 +471,15 @@ export class DialectEventMonitor extends EventEmitter {
   private evaluateConditions(event: SolanaEvent, conditions: EventCondition[]): boolean {
     if (conditions.length === 0) return true;
 
-    let result = this.evaluateCondition(event, conditions[0]);
+    const firstCondition = conditions[0];
+    if (!firstCondition) return true;
+
+    let result = this.evaluateCondition(event, firstCondition);
 
     for (let i = 1; i < conditions.length; i++) {
       const condition = conditions[i];
+      if (!condition) continue;
+      
       const conditionResult = this.evaluateCondition(event, condition);
 
       if (condition.logicalOperator === 'OR') {
@@ -528,66 +548,13 @@ export class DialectEventMonitor extends EventEmitter {
   }
 
   /**
-   * Send subscription updates to Dialect
-   */
-  private sendSubscriptionUpdate(): void {
-    if (!this.dialectWs || this.dialectWs.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const subscriptions = Array.from(this.subscriptions.values())
-      .filter(sub => sub.isActive)
-      .map(sub => ({
-        id: sub.id,
-        account: sub.accountAddress.toString(),
-        eventTypes: sub.eventTypes,
-      }));
-
-    const message = {
-      type: 'subscribe',
-      payload: { subscriptions },
-      timestamp: new Date().toISOString(),
-    };
-
-    this.dialectWs.send(JSON.stringify(message));
-    console.log(`📡 Updated ${subscriptions.length} Dialect subscriptions`);
-  }
-
-  /**
-   * Send pong response to ping
-   */
-  private sendPong(): void {
-    if (this.dialectWs && this.dialectWs.readyState === WebSocket.OPEN) {
-      const message = {
-        type: 'pong',
-        payload: {},
-        timestamp: new Date().toISOString(),
-      };
-      this.dialectWs.send(JSON.stringify(message));
-    }
-  }
-
-  /**
    * Start heartbeat to keep connections alive
    */
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
-      this.sendPing();
+      // Just log status for webhook-based monitoring
+      console.log('💓 Dialect Event Monitor heartbeat - webhook endpoint active');
     }, this.config.heartbeatInterval);
-  }
-
-  /**
-   * Send ping to check connection
-   */
-  private sendPing(): void {
-    if (this.dialectWs && this.dialectWs.readyState === WebSocket.OPEN) {
-      const message = {
-        type: 'ping',
-        payload: {},
-        timestamp: new Date().toISOString(),
-      };
-      this.dialectWs.send(JSON.stringify(message));
-    }
   }
 
   /**
@@ -608,7 +575,7 @@ export class DialectEventMonitor extends EventEmitter {
     this.reconnectTimer = setTimeout(async () => {
       try {
         console.log('🔄 Attempting to reconnect...');
-        await this.start();
+        await this.connectSolana();
       } catch (error) {
         console.error('❌ Reconnection failed:', error);
         this.scheduleReconnect();
