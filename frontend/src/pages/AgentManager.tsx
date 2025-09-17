@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { AgentService, Agent as ServiceAgent } from '../services/agents';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BeakerIcon,
@@ -19,52 +20,28 @@ import {
 } from '@heroicons/react/24/outline';
 // import { useWallet } from '@solana/wallet-adapter-react';
 
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  avatar?: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-  userId?: string;
-  aiConfig: {
-    model: string;
-    provider: 'openai' | 'anthropic';
-    temperature: number;
-    maxTokens: number;
-    systemPrompt: string;
-  };
-  stats: {
-    totalTriggers: number;
-    successfulExecutions: number;
-    failedExecutions: number;
-    averageResponseTime: number;
-    lastActivity: string;
-    uptime: number;
-  };
-  eventTriggers: number;
-  actions: number;
-}
+// Use Agent type from service
+type Agent = ServiceAgent;
 
 // No mock agents; list fetched from the backend.
 
 type FilterType = 'all' | 'active' | 'inactive';
 type SortType = 'name' | 'created' | 'activity' | 'performance';
 
-function AgentCard({ agent, onToggleActive, onEdit, onDelete, onView }: {
+const AgentCard = React.forwardRef<HTMLDivElement, {
   agent: Agent;
   onToggleActive: (agent: Agent) => void;
   onEdit: (agent: Agent) => void;
   onDelete: (agent: Agent) => void;
   onView: (agent: Agent) => void;
-}) {
+}>(({ agent, onToggleActive, onEdit, onDelete, onView }, ref) => {
   const successRate = agent.stats.totalTriggers > 0
     ? Math.round((agent.stats.successfulExecutions / agent.stats.totalTriggers) * 100)
     : 0;
 
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
@@ -125,8 +102,8 @@ function AgentCard({ agent, onToggleActive, onEdit, onDelete, onView }: {
       {/* Additional Info */}
       <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400 mb-4">
         <div className="flex items-center gap-4">
-          <span>{agent.eventTriggers} triggers</span>
-          <span>{agent.actions} actions</span>
+          <span>{Array.isArray(agent.eventTriggers) ? agent.eventTriggers.length : agent.eventTriggers || 0} triggers</span>
+          <span>{Array.isArray(agent.actions) ? agent.actions.length : agent.actions || 0} actions</span>
         </div>
         <span>Updated {new Date(agent.updatedAt).toLocaleDateString()}</span>
       </div>
@@ -174,7 +151,7 @@ function AgentCard({ agent, onToggleActive, onEdit, onDelete, onView }: {
       </div>
     </motion.div>
   );
-}
+});
 
 function StatsOverview({ agents }: { agents: Agent[] }) {
   const activeAgents = agents.filter(a => a.isActive).length;
@@ -237,6 +214,7 @@ function StatsOverview({ agents }: { agents: Agent[] }) {
 
 export default function AgentManager() {
   // const { publicKey } = useWallet();
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
@@ -273,10 +251,8 @@ export default function AgentManager() {
   const fetchAgents = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/agents');
-      const data = await response.json();
-      setAgents(data.agents || []);
-      console.log('Agents fetched:', data.agents);
+      const agents = await AgentService.getAllAgents();
+      setAgents(agents);
     } catch (error) {
       console.error('Failed to fetch agents:', error);
     } finally {
@@ -291,19 +267,10 @@ export default function AgentManager() {
   const handleSeedExample = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/agents/seed-example', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to seed example agent');
-      }
+      await AgentService.createExampleAgent();
       await fetchAgents();
-      toast.success('Example agent created successfully');
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to create example agent');
+    } catch (error) {
+      // Error already handled by service
     } finally {
       setIsLoading(false);
     }
@@ -311,18 +278,17 @@ export default function AgentManager() {
 
   const handleToggleActive = async (agent: Agent) => {
     try {
-      // TODO: API call to toggle agent status
+      const updatedAgent = await AgentService.toggleAgent(agent.id, !agent.isActive);
       setAgents(prev => prev.map(a =>
-        a.id === agent.id ? { ...a, isActive: !a.isActive } : a
+        a.id === agent.id ? updatedAgent : a
       ));
     } catch (error) {
-      console.error('Failed to toggle agent status:', error);
+      // Error already handled by service
     }
   };
 
   const handleEdit = (agent: Agent) => {
-    // TODO: Navigate to edit page or open modal
-    console.log('Edit agent:', agent.id);
+    navigate(`/agents/${agent.id}/edit`);
   };
 
   const handleDelete = async (agent: Agent) => {
@@ -331,10 +297,10 @@ export default function AgentManager() {
     }
 
     try {
-      // TODO: API call to delete agent
+      await AgentService.deleteAgent(agent.id);
       setAgents(prev => prev.filter(a => a.id !== agent.id));
     } catch (error) {
-      console.error('Failed to delete agent:', error);
+      // Error already handled by service
     }
   };
 

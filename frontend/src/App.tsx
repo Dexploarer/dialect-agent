@@ -12,6 +12,7 @@ import { Toaster } from 'react-hot-toast';
 import Dashboard from './pages/Dashboard';
 import ChatInterface from './pages/ChatInterface';
 import AgentManager from './pages/AgentManager';
+import CreateAgent from './pages/CreateAgent';
 import EventMonitor from './pages/EventMonitor';
 import Settings from './pages/Settings';
 import DialectDashboard from './pages/DialectDashboard';
@@ -71,6 +72,8 @@ function App() {
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/chat" element={<ChatInterface />} />
                       <Route path="/agents" element={<AgentManager />} />
+                      <Route path="/agents/create" element={<CreateAgent />} />
+                      <Route path="/agents/:id/edit" element={<CreateAgent />} />
                       <Route path="/events" element={<EventMonitor />} />
                       <Route path="/executions" element={<Executions />} />
                       <Route path="/dialect" element={<DialectDashboard />} />

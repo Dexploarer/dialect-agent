@@ -1418,6 +1418,107 @@ Please provide insights about what this event means and any recommended actions.
       this.emit('chat_session_closed', session);
     }
   }
+
+  /**
+   * Load existing agents from database on startup
+   */
+  private async loadAgentsFromDatabase(): Promise<void> {
+    console.log('📚 Loading agents from database...');
+    
+    try {
+      const dbManager = getDatabaseManager();
+      const rows = dbManager.query(`
+        SELECT * FROM agents 
+        ORDER BY created_at DESC
+      `);
+
+      let loadedCount = 0;
+      let activeCount = 0;
+
+      for (const row of rows) {
+        try {
+          const agent: Agent = {
+            id: row.id as string,
+            name: row.name as string,
+            description: row.description as string,
+            avatar: row.avatar as string || '',
+            isActive: Boolean(row.is_active),
+            createdAt: row.created_at as string,
+            updatedAt: row.updated_at as string,
+            userId: row.user_id as string || '',
+            aiConfig: JSON.parse(row.ai_config as string),
+            eventTriggers: JSON.parse(row.event_triggers as string) || [],
+            actions: JSON.parse(row.actions as string) || [],
+            stats: JSON.parse(row.stats as string) || this.getDefaultAgentStats(),
+            settings: JSON.parse(row.settings as string) || this.getDefaultAgentSettings(),
+          };
+
+          // Store agent in memory
+          this.agents.set(agent.id, agent);
+          loadedCount++;
+
+          if (agent.isActive) {
+            activeCount++;
+            console.log(`✅ Loaded active agent: ${agent.name} (${agent.id})`);
+            
+            // Register event triggers with Dialect monitor
+            for (const trigger of agent.eventTriggers) {
+              try {
+                if (this.dialectMonitor && typeof (this.dialectMonitor as any).addEventTrigger === 'function') {
+                  (this.dialectMonitor as any).addEventTrigger(agent.id, trigger);
+                }
+              } catch (error) {
+                console.warn(`⚠️ Failed to register event trigger for agent ${agent.name}:`, error);
+              }
+            }
+          } else {
+            console.log(`⏸️ Loaded inactive agent: ${agent.name} (${agent.id})`);
+          }
+
+        } catch (error) {
+          console.error(`❌ Error loading agent ${row.id}:`, error);
+        }
+      }
+
+      console.log(`📊 Loaded ${loadedCount} agents from database (${activeCount} active)`);
+      
+    } catch (error) {
+      console.error('❌ Error loading agents from database:', error);
+      // Don't throw - continue with empty agents list
+    }
+  }
+
+  /**
+   * Get default agent stats structure
+   */
+  private getDefaultAgentStats() {
+    return {
+      totalTriggers: 0,
+      successfulExecutions: 0,
+      failedExecutions: 0,
+      averageResponseTime: 0,
+      lastActivity: new Date().toISOString(),
+      uptime: 100,
+      eventsProcessed: {},
+      popularActions: [],
+    };
+  }
+
+  /**
+   * Get default agent settings structure
+   */
+  private getDefaultAgentSettings() {
+    return {
+      maxConcurrentActions: 5,
+      executionTimeout: 30000,
+      rateLimitPerMinute: 60,
+      enableDetailedLogging: true,
+      alertOnFailure: true,
+      allowedOrigins: ['*'],
+      requireAuthentication: false,
+      maxMemoryUsage: 512,
+    };
+  }
 }
 
 // Error classes
