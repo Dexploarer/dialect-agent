@@ -491,12 +491,40 @@ export default function ChatInterface() {
 
     setMessages(prev => [...prev, userMessage]);
 
-    // Simulate API call
+    // Call actual AI API
     setIsTyping(true);
+    const startTime = Date.now();
 
     try {
-      // TODO: Replace with actual API call
-      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: 'system',
+              content: `You are ${selectedAgent.name}, ${selectedAgent.description}. ${selectedAgent.personality ? `Your personality traits are: ${selectedAgent.personality.traits.join(', ')}. Use a ${selectedAgent.personality.communicationStyle} communication style.` : ''} Be helpful and provide actionable insights related to blockchain monitoring and analysis.`
+            },
+            {
+              role: 'user',
+              content: content
+            }
+          ],
+          model: 'gpt-4o',
+          temperature: 0.7,
+          maxTokens: 1000,
+          enableRag: true
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const responseTime = Date.now() - startTime;
 
       // Update user message status
       setMessages(prev => prev.map(msg =>
@@ -509,23 +537,40 @@ export default function ChatInterface() {
       const agentMessage: ChatMessage = {
         id: `agent-${Date.now()}`,
         role: 'agent',
-        content: `I understand you want to know about "${content}". As ${selectedAgent.name}, I'm analyzing this request and will provide you with relevant insights based on current blockchain data.`,
+        content: data.content,
         timestamp: new Date().toISOString(),
         metadata: {
-          responseTime: Math.floor(200 + Math.random() * 300),
-          actionsExecuted: Math.random() > 0.7 ? ['data_query'] : [],
-          eventTriggered: Math.random() > 0.8,
+          responseTime,
+          actionsExecuted: data.ragContext ? ['rag_search'] : [],
+          eventTriggered: false,
         },
       };
 
       setMessages(prev => [...prev, agentMessage]);
     } catch (error) {
+      console.error('Failed to send message:', error);
+      
       // Update user message status to error
       setMessages(prev => prev.map(msg =>
         msg.id === userMessage.id
           ? { ...msg, status: 'error' as const }
           : msg
       ));
+
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: `error-${Date.now()}`,
+        role: 'agent',
+        content: 'Sorry, I encountered an error while processing your request. Please try again.',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          responseTime: Date.now() - startTime,
+          actionsExecuted: [],
+          eventTriggered: false,
+        },
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsTyping(false);
     }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import ConnectivityStatus from '../components/ConnectivityStatus';
 import {
   BeakerIcon,
   ChatBubbleLeftRightIcon,
@@ -353,7 +354,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Agents"
-          value={stats.totalAgents}
+          value={stats ? stats.totalAgents : 0}
           change="+2 this week"
           changeType="increase"
           icon={BeakerIcon}
@@ -361,8 +362,8 @@ export default function Dashboard() {
         />
         <StatCard
           title="Active Agents"
-          value={stats.activeAgents}
-          change={`${Math.round((stats.activeAgents / stats.totalAgents) * 100)}% active`}
+          value={stats ? stats.activeAgents : 0}
+          change={`${stats && stats.totalAgents > 0 ? Math.round((stats.activeAgents / stats.totalAgents) * 100) : 0}% active`}
           changeType="increase"
           icon={BoltIcon}
           color="green"
@@ -377,13 +378,16 @@ export default function Dashboard() {
         />
         <StatCard
           title="Response Time"
-          value={`${stats.averageResponseTime}ms`}
+          value={`${stats ? stats.averageResponseTime : 0}ms`}
           change="-15ms vs last week"
           changeType="decrease"
           icon={ClockIcon}
           color="orange"
         />
       </div>
+
+      {/* Connectivity */}
+      <ConnectivityStatus />
 
       {/* Quick Actions */}
       <div>
@@ -482,7 +486,7 @@ export default function Dashboard() {
                   Uptime
                 </span>
                 <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {stats.uptime}%
+                  {stats ? stats.uptime : 0}%
                 </span>
               </div>
             </div>

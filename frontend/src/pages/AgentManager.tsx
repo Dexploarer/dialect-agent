@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -269,24 +270,44 @@ export default function AgentManager() {
       }
     });
 
-  useEffect(() => {
-    // TODO: Fetch agents from API
-    const fetchAgents = async () => {
-      setIsLoading(true);
-      try {
-        const response = await fetch('/api/agents');
-        const data = await response.json();
-        setAgents(data.agents);
-        console.log('Agents fetched:', data.agents);
-      } catch (error) {
-        console.error('Failed to fetch agents:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const fetchAgents = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/agents');
+      const data = await response.json();
+      setAgents(data.agents || []);
+      console.log('Agents fetched:', data.agents);
+    } catch (error) {
+      console.error('Failed to fetch agents:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchAgents();
   }, []);
+
+  const handleSeedExample = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/agents/seed-example', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to seed example agent');
+      }
+      await fetchAgents();
+      toast.success('Example agent created successfully');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to create example agent');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleToggleActive = async (agent: Agent) => {
     try {
@@ -335,13 +356,22 @@ export default function AgentManager() {
             Create, configure, and manage your intelligent blockchain agents
           </p>
         </div>
-        <Link
-          to="/agents/create"
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
-        >
-          <PlusIcon className="w-5 h-5" />
-          Create Agent
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSeedExample}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+          >
+            <PlusIcon className="w-5 h-5" />
+            Create Example Agent
+          </button>
+          <Link
+            to="/agents/create"
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
+          >
+            <PlusIcon className="w-5 h-5" />
+            Create Agent
+          </Link>
+        </div>
       </div>
 
       {/* Stats Overview */}

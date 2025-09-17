@@ -19,6 +19,7 @@ import {
   TrendingDown,
   RefreshCw
 } from 'lucide-react';
+import Skeleton from '@/components/Skeleton';
 
 interface NotificationTemplate {
   id: string;
@@ -60,6 +61,8 @@ export default function DialectNotifications() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [needsConfig, setNeedsConfig] = useState(false);
+  const [configHint, setConfigHint] = useState<string | null>(null);
   
   // Form states
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -135,6 +138,13 @@ export default function DialectNotifications() {
     try {
       setIsLoading(true);
       const response = await fetch('/api/dialect/inbox/notifications?limit=50');
+      if (response.status === 401 || response.status === 503) {
+        const data = await response.json().catch(() => ({}));
+        setNeedsConfig(true);
+        setConfigHint(data.hint || 'Dialect inbox not configured or unauthorized.');
+        setHistory([]);
+        return;
+      }
       if (response.ok) {
         const data = await response.json();
         setHistory(data.notifications || []);
@@ -406,7 +416,18 @@ export default function DialectNotifications() {
         </div>
       </div>
 
-      {error && (
+      {needsConfig && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            {configHint || 'Dialect not configured. Set required API keys to enable inbox notifications.'}
+            {' '}—
+            <a href="/settings" className="underline font-medium ml-1">Configure Dialect</a>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {!needsConfig && error && (
         <Alert variant="destructive">
           <XCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
@@ -755,7 +776,16 @@ export default function DialectNotifications() {
           </div>
 
           <div className="space-y-3">
-            {filteredHistory.map((notification) => (
+            {isLoading && (
+              Array.from({ length: 5 }).map((_, i) => (
+                <div key={`hist-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                  <Skeleton className="h-4 w-40 mb-2" />
+                  <Skeleton className="h-3 w-3/4 mb-2" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ))
+            )}
+            {!isLoading && filteredHistory.map((notification) => (
               <Card key={notification.id}>
                 <CardContent className="pt-4">
                   <div className="flex items-start justify-between">

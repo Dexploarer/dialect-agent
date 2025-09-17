@@ -26,7 +26,7 @@ A complete AI-powered application built with AI SDK 5, Bun, and SQLite with vect
 
 - [Bun](https://bun.sh/) v1.0.0 or higher
 - Node.js v18+ (for compatibility)
-- OpenAI API key and/or Anthropic API key
+- Vercel AI Gateway API key
 
 ### Installation
 
@@ -47,10 +47,9 @@ A complete AI-powered application built with AI SDK 5, Bun, and SQLite with vect
    # Edit .env with your API keys and configuration
    ```
 
-   **Important**: This application is configured to use an AI Gateway instead of direct OpenAI API calls. Configure your AI Gateway settings:
-   - `AI_GATEWAY_URL`: Your AI Gateway endpoint (e.g., `https://your-gateway.com/v1`)
+   **Important**: This application is configured to use the Vercel AI Gateway with the AI SDK v5 (not OpenAI-compatible endpoints). Configure your AI Gateway settings:
    - `AI_GATEWAY_API_KEY`: Your AI Gateway API key
-   - `OPENAI_API_KEY`: Fallback OpenAI API key (optional)
+   - `AI_GATEWAY_URL` (optional): Defaults to `https://ai-gateway.vercel.sh/v1/ai`. Override only if instructed by Vercel.
 
 4. **Initialize the database**
    ```bash
@@ -76,9 +75,10 @@ The server will start at `http://localhost:3000`
 Create a `.env` file in the root directory with the following variables:
 
 ```env
-# AI Provider API Keys (at least one required)
-OPENAI_API_KEY=sk-your-openai-api-key-here
-ANTHROPIC_API_KEY=sk-ant-your-anthropic-api-key-here
+# Vercel AI Gateway
+AI_GATEWAY_API_KEY=your-ai-gateway-api-key-here
+# Optional: override base URL for Gateway; defaults to https://ai-gateway.vercel.sh/v1/ai
+AI_GATEWAY_URL=https://ai-gateway.vercel.sh/v1/ai
 
 # Database Configuration
 DATABASE_PATH=./data/app.db
@@ -89,8 +89,8 @@ PORT=3000
 HOST=localhost
 NODE_ENV=development
 
-# Vector Embeddings Configuration  
-EMBEDDING_MODEL=text-embedding-3-small
+# Vector Embeddings Configuration (Gateway namespaced id)
+EMBEDDING_MODEL=openai/text-embedding-3-small
 EMBEDDING_DIMENSIONS=1536
 VECTOR_SIMILARITY_THRESHOLD=0.7
 
@@ -109,6 +109,29 @@ LOG_LEVEL=info
 # CORS Settings
 CORS_ORIGIN=http://localhost:3000
 CORS_CREDENTIALS=true
+
+## Deployment
+
+### Railway (Backend)
+
+This repo includes a Dockerfile for the backend. On Railway:
+
+1. Create a new service from this repository.
+2. Railway will detect the Dockerfile and build the Bun-based image.
+3. Set environment variables in Railway:
+   - `PORT=3000`
+   - `HOST=0.0.0.0`
+   - `NODE_ENV=production`
+   - `AI_GATEWAY_API_KEY` (Vercel AI Gateway)
+   - `AI_GATEWAY_URL` (optional override of Gateway base URL)
+   - `AI_DEFAULT_MODEL` (e.g., `openai/gpt-4o`)
+   - `DIALECT_API_KEY`, `DIALECT_APP_ID`, `DIALECT_ALERTS_BASE_URL` (optional; defaults to `https://alerts-api.dial.to`)
+   - `DIALECT_WEBHOOK_SECRET` and `DIALECT_WEBHOOK_SIGNATURE_HEADER` (optional verification)
+   - `REDIS_URL` (optional, enables durable background queues)
+4. Expose port 3000 and deploy.
+5. Register your webhook endpoint with Dialect pointing to `https://<railway-app-domain>/api/webhooks/dialect`.
+
+Frontend can be deployed separately (e.g., Vercel) and configured to point its `/api` proxy at the Railway backend.
 ```
 
 ### Supported AI Models
@@ -126,10 +149,10 @@ CORS_CREDENTIALS=true
 - `claude-3-sonnet-20240229`
 - `claude-3-haiku-20240307`
 
-**OpenAI Embedding Models:**
-- `text-embedding-3-small` (default, 1536 dimensions)
-- `text-embedding-3-large` (3072 dimensions)  
-- `text-embedding-ada-002` (1536 dimensions)
+**Embedding Models (via Gateway):**
+- `openai/text-embedding-3-small` (default, 1536 dimensions)
+- `openai/text-embedding-3-large` (3072 dimensions)
+- `openai/text-embedding-ada-002` (1536 dimensions)
 
 ## 📊 Database Schema
 
@@ -530,13 +553,13 @@ data/                # Database files (created automatically)
 
 ### Custom Embedding Models
 
-You can configure different OpenAI embedding models by setting the `EMBEDDING_MODEL` environment variable:
+You can configure different embedding models (via Vercel AI Gateway) by setting the `EMBEDDING_MODEL` environment variable. Use namespaced IDs:
 
-```env  
-# OpenAI embedding models:
-EMBEDDING_MODEL=text-embedding-3-small  # 1536 dimensions (default)
-EMBEDDING_MODEL=text-embedding-3-large  # 3072 dimensions  
-EMBEDDING_MODEL=text-embedding-ada-002  # 1536 dimensions (legacy)
+```env
+# Embedding models (Gateway):
+EMBEDDING_MODEL=openai/text-embedding-3-small  # 1536 dimensions (default)
+EMBEDDING_MODEL=openai/text-embedding-3-large  # 3072 dimensions
+EMBEDDING_MODEL=openai/text-embedding-ada-002  # 1536 dimensions (legacy)
 ```
 
 ### Database Tuning
@@ -589,7 +612,7 @@ The SQLite database is configured with optimized settings:
 ### Performance Issues
 
 **Slow embeddings generation:**
-- Use `text-embedding-3-small` instead of `text-embedding-3-large`  
+- Use `openai/text-embedding-3-small` instead of `openai/text-embedding-3-large`
 - Reduce batch size in configuration
 - Check OpenAI API rate limits
 

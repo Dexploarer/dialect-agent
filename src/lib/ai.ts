@@ -1,9 +1,10 @@
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { createGateway } from "@ai-sdk/gateway";
 import {
   generateText,
   generateObject,
   streamText,
+  jsonSchema,
+  tool,
 } from "ai";
 import type {
   CoreMessage,
@@ -14,8 +15,8 @@ import { findSimilarDocuments, type SearchResult } from "./embeddings.js";
 
 export interface AIConfig {
   defaultProvider: "openai" | "anthropic";
-  openaiApiKey?: string;
-  anthropicApiKey?: string;
+  openaiApiKey?: string; // unused with Gateway; kept for type compatibility
+  anthropicApiKey?: string; // unused with Gateway; kept for type compatibility
   aiGatewayUrl?: string;
   aiGatewayApiKey?: string;
   aiGatewayOrder?: string[];
@@ -33,13 +34,19 @@ export interface AIConfig {
     similarityThreshold: number;
     includeMetadata: boolean;
   };
+  webFetch: {
+    unrestricted: boolean;
+    allowlist: string[];
+    maxBytes: number;
+    timeoutMs: number;
+  };
 }
 
 // Default configuration
 const defaultConfig: AIConfig = {
   defaultProvider: "openai",
-  openaiApiKey: process.env.OPENAI_API_KEY || "",
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+  openaiApiKey: process.env.OPENAI_API_KEY || "", // deprecated (Gateway only)
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "", // deprecated (Gateway only)
   aiGatewayUrl: process.env.AI_GATEWAY_URL || "",
   aiGatewayApiKey: process.env.AI_GATEWAY_API_KEY || "",
   aiGatewayOrder: (process.env.AI_GATEWAY_ORDER || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -58,6 +65,15 @@ const defaultConfig: AIConfig = {
     maxResults: 5,
     similarityThreshold: 0.7,
     includeMetadata: true,
+  },
+  webFetch: {
+    unrestricted: (process.env.WEB_FETCH_UNRESTRICTED || "false").toLowerCase() === "true",
+    allowlist: (process.env.WEB_FETCH_ALLOWLIST || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    maxBytes: Number(process.env.WEB_FETCH_MAX_BYTES || 1_000_000),
+    timeoutMs: Number(process.env.WEB_FETCH_TIMEOUT || 10_000),
   },
 };
 
@@ -101,6 +117,7 @@ export interface ChatOptions {
   enableRag?: boolean;
   systemPrompt?: string;
   ragQuery?: string;
+  toolsEnabled?: boolean;
 }
 
 export interface StreamingOptions extends ChatOptions {
@@ -112,6 +129,10 @@ export interface StreamingOptions extends ChatOptions {
 export class AIService {
   private config: AIConfig;
   private models: Map<string, LanguageModel>;
+  private gatewayProvider = createGateway({
+    apiKey: process.env.AI_GATEWAY_API_KEY || '',
+    baseURL: process.env.AI_GATEWAY_URL || 'https://gateway.ai.vercel.com',
+  });
 
   constructor(config?: Partial<AIConfig>) {
     this.config = { ...defaultConfig, ...config };
@@ -119,54 +140,37 @@ export class AIService {
     this.initializeModels();
   }
 
+  // Tools disabled due to TypeScript compatibility issues with AI SDK
+  // private readonly tools = { ... };
+
   private initializeModels(): void {
-    // If using direct providers (no Gateway), register LanguageModel instances.
-    const usingGateway = Boolean(this.config.aiGatewayUrl || this.config.aiGatewayApiKey);
-    if (usingGateway) {
-      // Gateway path uses model id strings; no need to pre-register LanguageModel instances.
-      return;
-    }
-
-    if (this.config.openaiApiKey) {
-      this.models.set("openai/gpt-4-turbo", openai("gpt-4-turbo"));
-      this.models.set("openai/gpt-4", openai("gpt-4"));
-      this.models.set("openai/gpt-3.5-turbo", openai("gpt-3.5-turbo"));
-      this.models.set("openai/gpt-4o", openai("gpt-4o"));
-      this.models.set("openai/gpt-4o-mini", openai("gpt-4o-mini"));
-    }
-
-    if (this.config.anthropicApiKey) {
-      this.models.set(
+    // Register models via Vercel AI Gateway only
+    this.models.clear();
+    if (this.config.aiGatewayApiKey || process.env.AI_GATEWAY_API_KEY) {
+      const supportedModels = [
+        // OpenAI family
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "openai/gpt-4-turbo",
+        // Anthropic family
         "anthropic/claude-3-5-sonnet-20241022",
-        anthropic("claude-3-5-sonnet-20241022"),
-      );
-      this.models.set(
         "anthropic/claude-3-opus-20240229",
-        anthropic("claude-3-opus-20240229"),
-      );
-      this.models.set(
         "anthropic/claude-3-sonnet-20240229",
-        anthropic("claude-3-sonnet-20240229"),
-      );
-      this.models.set(
         "anthropic/claude-3-haiku-20240307",
-        anthropic("claude-3-haiku-20240307"),
-      );
+      ];
+      for (const id of supportedModels) {
+        this.models.set(id, this.gatewayProvider.languageModel(id));
+      }
     }
   }
 
   private resolveModelArg(modelName?: string): string | LanguageModel {
-    const usingGateway = Boolean(this.config.aiGatewayUrl || this.config.aiGatewayApiKey);
     const requested = modelName || this.config.defaultModel;
+    const key = requested.includes("/")
+      ? requested
+      : `${this.config.defaultProvider}/${requested}`;
 
-    if (usingGateway) {
-      // Ensure namespacing for gateway model ids
-      if (requested.includes("/")) return requested;
-      const provider = this.config.defaultProvider;
-      return `${provider}/${requested}`;
-    }
-
-    const selectedModel = this.models.get(requested.includes("/") ? requested : `${this.config.defaultProvider}/${requested}`);
+    const selectedModel = this.models.get(key);
     if (!selectedModel) {
       throw new Error(`Model ${requested} not available. Check your API keys and model configuration.`);
     }
@@ -181,17 +185,23 @@ export class AIService {
     ragQuery?: string,
   ): Promise<RAGContext> {
     const searchQuery = ragQuery || query;
-
-    const results = await findSimilarDocuments(searchQuery, {
-      limit: this.config.ragConfig.maxResults,
-      threshold: this.config.ragConfig.similarityThreshold,
-    });
-
-    return {
-      results,
-      query: searchQuery,
-      totalResults: results.length,
-    };
+    try {
+      const results = await findSimilarDocuments(searchQuery, {
+        limit: this.config.ragConfig.maxResults,
+        threshold: this.config.ragConfig.similarityThreshold,
+      });
+      return {
+        results,
+        query: searchQuery,
+        totalResults: results.length,
+      };
+    } catch (err) {
+      console.warn(
+        "RAG lookup failed; continuing without context:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { results: [], query: searchQuery, totalResults: 0 };
+    }
   }
 
   /**
@@ -233,7 +243,7 @@ When referencing this context in your response, please cite the source numbers (
   async generateChatCompletion(
     messages: CoreMessage[],
     options: ChatOptions = {},
-  ): Promise<{ content: string; ragContext?: RAGContext }> {
+  ): Promise<{ content: string; ragContext?: RAGContext; finishReason?: string; usage?: any }> {
     const model = this.resolveModelArg(options.model);
 
     let ragContext: RAGContext | undefined;
@@ -273,27 +283,18 @@ When referencing this context in your response, please cite the source numbers (
         model,
         messages: finalMessages,
         temperature: options.temperature ?? this.config.temperature,
-        maxTokens: options.maxTokens ?? this.config.maxTokens,
+        maxOutputTokens: options.maxTokens ?? this.config.maxTokens,
         topP: this.config.topP,
         frequencyPenalty: this.config.frequencyPenalty,
         presencePenalty: this.config.presencePenalty,
-        ...(this.config.aiGatewayUrl || this.config.aiGatewayApiKey
-          ? {
-              providerOptions: {
-                gateway: {
-                  ...(this.config.aiGatewayOrder && this.config.aiGatewayOrder.length > 0
-                    ? { order: this.config.aiGatewayOrder }
-                    : {}),
-                  ...(this.config.aiGatewayUrl ? { url: this.config.aiGatewayUrl } : {}),
-                  ...(this.config.aiGatewayApiKey ? { apiKey: this.config.aiGatewayApiKey } : {}),
-                },
-              },
-            }
-          : {}),
+        // Tools disabled due to TypeScript compatibility issues
+        // ...(options.toolsEnabled ? { tools: this.tools } : {}),
       });
 
       return {
         content: result.text,
+        finishReason: (result as any).finishReason,
+        usage: (result as any).usage,
         ...(ragContext && { ragContext }),
       };
     } catch (error) {
@@ -347,23 +348,12 @@ When referencing this context in your response, please cite the source numbers (
         model,
         messages: finalMessages,
         temperature: options.temperature ?? this.config.temperature,
-        maxTokens: options.maxTokens ?? this.config.maxTokens,
+        maxOutputTokens: options.maxTokens ?? this.config.maxTokens,
         topP: this.config.topP,
         frequencyPenalty: this.config.frequencyPenalty,
         presencePenalty: this.config.presencePenalty,
-        ...(this.config.aiGatewayUrl || this.config.aiGatewayApiKey
-          ? {
-              providerOptions: {
-                gateway: {
-                  ...(this.config.aiGatewayOrder && this.config.aiGatewayOrder.length > 0
-                    ? { order: this.config.aiGatewayOrder }
-                    : {}),
-                  ...(this.config.aiGatewayUrl ? { url: this.config.aiGatewayUrl } : {}),
-                  ...(this.config.aiGatewayApiKey ? { apiKey: this.config.aiGatewayApiKey } : {}),
-                },
-              },
-            }
-          : {}),
+        // Tools disabled due to TypeScript compatibility issues
+        // ...(options.toolsEnabled ? { tools: this.tools } : {}),
       });
 
       return {
@@ -374,6 +364,43 @@ When referencing this context in your response, please cite the source numbers (
       console.error("Streaming completion error:", error);
       throw new Error(`Failed to generate streaming response: ${error}`);
     }
+  }
+
+  /**
+   * Stream structured object response using JSON Schema
+   */
+  async generateObjectStreamWithJsonSchema<T = any>(
+    messages: CoreMessage[],
+    schemaObject: Record<string, any>,
+    options: ChatOptions = {},
+  ) {
+    const model = this.resolveModelArg(options.model);
+
+    let ragContext: RAGContext | undefined;
+    let finalMessages = messages;
+
+    if ((options.enableRag ?? this.config.enableRag) && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === 'user' && typeof lastMessage.content === 'string') {
+        ragContext = await this.performRAG(lastMessage.content, options.ragQuery);
+        const systemMessage = finalMessages.find((m) => m.role === 'system');
+        const baseSystemPrompt = (systemMessage?.content as string) || 'You are a helpful assistant.';
+        const enhancedSystemPrompt = this.buildSystemPromptWithRAG(baseSystemPrompt, ragContext);
+        finalMessages = [{ role: 'system', content: enhancedSystemPrompt }, ...finalMessages.filter((m) => m.role !== 'system')];
+      }
+    }
+
+    const result = await (await import('ai')).streamObject({
+      model,
+      messages: finalMessages,
+      schema: jsonSchema({ schema: schemaObject }),
+      temperature: options.temperature ?? this.config.temperature,
+      maxOutputTokens: options.maxTokens ?? this.config.maxTokens,
+      // Tools disabled due to TypeScript compatibility issues
+      // ...(options.toolsEnabled ? { tools: this.tools } : {}),
+    });
+
+    return { result, ragContext };
   }
 
   /**
@@ -423,20 +450,9 @@ When referencing this context in your response, please cite the source numbers (
         messages: finalMessages,
         schema,
         temperature: options.temperature ?? this.config.temperature,
-        maxTokens: options.maxTokens ?? this.config.maxTokens,
-        ...(this.config.aiGatewayUrl || this.config.aiGatewayApiKey
-          ? {
-              providerOptions: {
-                gateway: {
-                  ...(this.config.aiGatewayOrder && this.config.aiGatewayOrder.length > 0
-                    ? { order: this.config.aiGatewayOrder }
-                    : {}),
-                  ...(this.config.aiGatewayUrl ? { url: this.config.aiGatewayUrl } : {}),
-                  ...(this.config.aiGatewayApiKey ? { apiKey: this.config.aiGatewayApiKey } : {}),
-                },
-              },
-            }
-          : {}),
+        maxOutputTokens: options.maxTokens ?? this.config.maxTokens,
+        // Tools disabled due to TypeScript compatibility issues
+        // ...(options.toolsEnabled ? { tools: this.tools } : {}),
       });
 
       return {
@@ -447,6 +463,43 @@ When referencing this context in your response, please cite the source numbers (
       console.error("Structured generation error:", error);
       throw new Error(`Failed to generate structured response: ${error}`);
     }
+  }
+
+  /**
+   * Generate structured object from JSON Schema (using AI SDK jsonSchema helper)
+   */
+  async generateObjectWithJsonSchema<T = any>(
+    messages: CoreMessage[],
+    schemaObject: Record<string, any>,
+    options: ChatOptions = {},
+  ): Promise<{ object: T; ragContext?: RAGContext }> {
+    const model = this.resolveModelArg(options.model);
+
+    let ragContext: RAGContext | undefined;
+    let finalMessages = messages;
+
+    if ((options.enableRag ?? this.config.enableRag) && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === "user" && typeof lastMessage.content === "string") {
+        ragContext = await this.performRAG(lastMessage.content, options.ragQuery);
+        const systemMessage = finalMessages.find((m) => m.role === "system");
+        const baseSystemPrompt = (systemMessage?.content as string) || "You are a helpful assistant.";
+        const enhancedSystemPrompt = this.buildSystemPromptWithRAG(baseSystemPrompt, ragContext);
+        finalMessages = [{ role: "system", content: enhancedSystemPrompt }, ...finalMessages.filter((m) => m.role !== "system")];
+      }
+    }
+
+    const result = await generateObject({
+      model,
+      messages: finalMessages,
+      schema: jsonSchema({ schema: schemaObject }),
+      temperature: options.temperature ?? this.config.temperature,
+      maxOutputTokens: options.maxTokens ?? this.config.maxTokens,
+      // Tools disabled due to TypeScript compatibility issues
+      // ...(options.toolsEnabled ? { tools: this.tools } : {}),
+    });
+
+    return { object: result.object as T, ...(ragContext && { ragContext }) };
   }
 
   /**
@@ -574,6 +627,16 @@ export function getAIService(config?: Partial<AIConfig>): AIService {
 }
 
 /**
+ * Get AI service instance, throwing if not initialized
+ */
+export function getAIServiceOrThrow(): AIService {
+  if (!aiService) {
+    throw new Error("AI service not initialized. Check your AI_GATEWAY_API_KEY environment variable.");
+  }
+  return aiService;
+}
+
+/**
  * Initialize AI service with configuration validation
  */
 export function initializeAIService(config?: Partial<AIConfig>): AIService | null {
@@ -581,17 +644,27 @@ export function initializeAIService(config?: Partial<AIConfig>): AIService | nul
 
   // Validate that at least one provider is configured
   const availableModels = service.getAvailableModels();
-  if (availableModels.length === 0) {
-    console.warn(
-      "⚠️ No AI providers configured. Please set AI_GATEWAY_API_KEY (or OPENAI_API_KEY) or ANTHROPIC_API_KEY environment variables.",
-    );
-    console.warn("⚠️ AI features will be disabled for testing purposes.");
+  const cfg = service.getConfig();
+  const usingGateway = Boolean(cfg.aiGatewayApiKey || process.env.AI_GATEWAY_API_KEY);
+  if (!usingGateway) {
+    console.warn("⚠️ Vercel AI Gateway is required. Set AI_GATEWAY_API_KEY (and optionally AI_GATEWAY_URL).");
     return null;
   }
 
-  console.log(
-    `AI Service initialized with models: ${availableModels.join(", ")}`,
-  );
+  if (availableModels.length === 0) {
+    console.warn(
+      "⚠️ No models registered. Verify AI_DEFAULT_MODEL and Gateway configuration.",
+    );
+    return null;
+  }
+
+  if (usingGateway) {
+    console.log("AI Service initialized via Gateway with default model:", cfg.defaultModel);
+  } else {
+    console.log(
+      `AI Service initialized with models: ${availableModels.join(", ")}`,
+    );
+  }
   return service;
 }
 

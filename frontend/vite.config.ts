@@ -16,12 +16,12 @@ export default defineConfig({
       '@/types': resolve(__dirname, './src/types'),
       '@/utils': resolve(__dirname, './src/utils'),
       '@/pages': resolve(__dirname, './src/pages'),
-      buffer: 'buffer',
     },
   },
 
   define: {
     global: 'globalThis',
+    'process.env': {},
   },
 
   server: {
@@ -29,6 +29,10 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/health': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
@@ -65,7 +69,6 @@ export default defineConfig({
       '@solana/wallet-adapter-react',
       '@solana/wallet-adapter-react-ui',
       '@solana/wallet-adapter-wallets',
-      'buffer',
     ],
     exclude: ['@solana/wallet-adapter-phantom'],
   },

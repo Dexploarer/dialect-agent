@@ -4,15 +4,15 @@
   "description": "AI SDK 5 application with Bun and SQLite vector embeddings",
   "type": "module",
   "scripts": {
-    "dev": "(trap 'kill 0' SIGINT; bun run dev:backend & bun run dev:frontend & wait)",
+    "dev": "bun run src/scripts/dev.ts",
     "dev:backend": "bun run --hot src/index.ts",
     "dev:frontend": "cd frontend && bun run dev",
-    "dev:all": "bun run --concurrent dev:backend dev:frontend",
     "start": "bun run src/index.ts",
     "build": "bun build src/index.ts --outdir=dist --target=bun",
     "test": "bun test",
     "db:setup": "bun run src/db/setup.ts",
-    "db:seed": "bun run src/db/seed.ts"
+    "db:seed": "bun run src/db/seed.ts",
+    "postinstall": "cd frontend && bun install"
   },
   "keywords": [
     "ai",
@@ -26,27 +26,26 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "ai": "^3.4.0",
-    "@ai-sdk/openai": "^0.0.66",
-    "@ai-sdk/anthropic": "^0.0.54",
-    "hono": "^4.6.3",
-    "dotenv": "^16.4.5",
-    "zod": "^3.23.8",
-    "nanoid": "^5.0.7",
-    "@solana/web3.js": "^1.91.8",
+    "@ai-sdk/gateway": "^1.0.23",
     "@solana/spl-token": "^0.4.6",
-    "ws": "^8.16.0",
-    "node-cron": "^3.0.3",
+    "@solana/web3.js": "^1.91.8",
+    "ai": "^5.0.44",
     "axios": "^1.6.7",
     "bull": "^4.12.2",
-    "redis": "^4.6.13"
+    "dotenv": "^16.4.5",
+    "hono": "^4.6.3",
+    "nanoid": "^5.0.7",
+    "node-cron": "^3.0.3",
+    "redis": "^4.6.13",
+    "ws": "^8.16.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.6.2",
-    "bun-types": "^1.1.29",
-    "@types/ws": "^8.5.10",
+    "@types/bull": "^4.10.0",
     "@types/node-cron": "^3.0.11",
-    "@types/bull": "^4.10.0"
+    "@types/ws": "^8.5.10",
+    "bun-types": "^1.1.29",
+    "typescript": "^5.6.2"
   },
   "engines": {
     "bun": ">=1.0.0"

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import Skeleton from '@/components/Skeleton';
 import { useWallet } from '@solana/wallet-adapter-react';
+import bs58 from 'bs58';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -77,6 +79,8 @@ export default function DialectAuth() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingSubscriptions, setIsLoadingSubscriptions] = useState(false);
+  const [isLoadingChannels, setIsLoadingChannels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [email, setEmail] = useState('');
@@ -117,6 +121,8 @@ export default function DialectAuth() {
 
   const loadUserData = async (token: string) => {
     try {
+      setIsLoadingSubscriptions(true);
+      setIsLoadingChannels(true);
       // Load subscriptions
       const subsResponse = await fetch('/api/dialect/auth/subscriptions', {
         headers: { 'Authorization': `Bearer ${token}` },
@@ -125,6 +131,7 @@ export default function DialectAuth() {
         const subsData = await subsResponse.json();
         setSubscriptions(subsData.subscriptions || []);
       }
+      setIsLoadingSubscriptions(false);
 
       // Load notifications
       const notifResponse = await fetch('/api/dialect/inbox/notifications?limit=10', {
@@ -143,8 +150,11 @@ export default function DialectAuth() {
         const channelsData = await channelsResponse.json();
         setChannels(channelsData.channels || []);
       }
+      setIsLoadingChannels(false);
     } catch (error) {
       console.error('Failed to load user data:', error);
+      setIsLoadingSubscriptions(false);
+      setIsLoadingChannels(false);
     }
   };
 
@@ -173,6 +183,7 @@ export default function DialectAuth() {
 
       // Step 2: Sign message
       const signature = await signMessage(new TextEncoder().encode(message));
+      const signatureBase58 = bs58.encode(signature);
 
       // Step 3: Verify authentication
       const verifyResponse = await fetch('/api/dialect/auth/verify', {
@@ -180,7 +191,7 @@ export default function DialectAuth() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message,
-          signature: Array.from(signature).join(','),
+          signature: signatureBase58,
         }),
       });
 
@@ -389,6 +400,17 @@ export default function DialectAuth() {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4">
+            {isLoading && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={`auth-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <Skeleton className="h-5 w-32 mb-3" />
+                    <Skeleton className="h-3 w-48 mb-2" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardHeader className="pb-3">
@@ -431,7 +453,21 @@ export default function DialectAuth() {
 
           <TabsContent value="subscriptions" className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {subscriptions.map((subscription) => (
+              {isLoadingSubscriptions && (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <div key={`subs-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <Skeleton className="h-5 w-40 mb-3" />
+                    <Skeleton className="h-3 w-24 mb-2" />
+                    <div className="flex gap-2 mb-2">
+                      <Skeleton className="h-5 w-16" />
+                      <Skeleton className="h-5 w-16" />
+                      <Skeleton className="h-5 w-16" />
+                    </div>
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                ))
+              )}
+              {!isLoadingSubscriptions && subscriptions.map((subscription) => (
                 <Card key={subscription.id}>
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -488,7 +524,22 @@ export default function DialectAuth() {
 
           <TabsContent value="channels" className="space-y-4">
             <div className="space-y-4">
-              {channels.map((channel) => (
+              {isLoadingChannels && (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <div key={`chan-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-5 w-5 rounded-full" />
+                        <Skeleton className="h-5 w-24" />
+                      </div>
+                      <Skeleton className="h-5 w-16" />
+                    </div>
+                    <Skeleton className="h-3 w-3/4 mb-2" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
+                ))
+              )}
+              {!isLoadingChannels && channels.map((channel) => (
                 <Card key={channel.type}>
                   <CardHeader>
                     <div className="flex items-center justify-between">

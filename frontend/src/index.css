@@ -7,6 +7,7 @@
   * {
     box-sizing: border-box;
   }
+  :root { --container-max: 1200px; }
   
   html {
     font-size: 16px;
@@ -24,6 +25,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+  p, li, td, th { word-break: break-word; overflow-wrap: anywhere; }
+  code, pre { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
+  pre { white-space: pre-wrap; word-break: break-word; }
   
   h1, h2, h3, h4, h5, h6 {
     font-weight: 600;

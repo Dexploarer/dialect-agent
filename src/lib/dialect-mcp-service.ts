@@ -11,6 +11,9 @@
  */
 
 import { EventEmitter } from 'events';
+import { createDialectBlinksService, DialectBlinksService } from './dialect-blinks.js';
+import { createDialectMarketsService, DialectMarketsService } from './dialect-markets.js';
+import { createDialectAlertsService, DialectAlertsService } from './dialect-alerts.js';
 
 export interface DialectMCPConfig {
   apiKey: string;
@@ -89,6 +92,9 @@ export class DialectMCPService extends EventEmitter {
   private config: DialectMCPConfig;
   private baseUrl: string;
   private isConnected: boolean = false;
+  private blinksService: DialectBlinksService;
+  private marketsService: DialectMarketsService;
+  private alertsService: DialectAlertsService;
 
   constructor(config: DialectMCPConfig) {
     super();
@@ -97,6 +103,21 @@ export class DialectMCPService extends EventEmitter {
       ...config,
     };
     this.baseUrl = this.config.baseUrl || 'https://api.dialect.to';
+
+    // Initialize underlying Dialect services using the provided config
+    this.blinksService = createDialectBlinksService({
+      apiKey: this.config.apiKey,
+      baseUrl: this.baseUrl,
+    });
+    this.marketsService = createDialectMarketsService({
+      apiKey: this.config.apiKey,
+      baseUrl: this.baseUrl,
+    });
+    this.alertsService = createDialectAlertsService({
+      apiKey: this.config.apiKey,
+      appId: this.config.appId || '',
+      baseUrl: process.env.DIALECT_ALERTS_BASE_URL || 'https://alerts-api.dial.to',
+    });
   }
 
   /**
@@ -136,8 +157,9 @@ export class DialectMCPService extends EventEmitter {
         throw new Error(`Connection test failed: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.warn('⚠️ Dialect API connection test failed, using mock data:', error);
-      // Continue with mock data for development
+      // Non-blocking in restricted networks (local dev, CI). Reduce noise.
+      console.info('ℹ️ Dialect API connectivity check skipped/unavailable. Continuing without health probe.');
+      // Continue; downstream services handle errors and 503s gracefully
     }
   }
 
@@ -145,103 +167,26 @@ export class DialectMCPService extends EventEmitter {
    * Get available Blinks from Dialect's Standard Blinks Library
    */
   async getAvailableBlinks(category?: string): Promise<BlinkAction[]> {
-    try {
-      const params = new URLSearchParams();
-      if (category) params.append('category', category);
-
-      const response = await fetch(`${this.baseUrl}/v1/blinks?${params}`, {
-        headers: {
-          'x-dialect-api-key': this.config.apiKey,
-        },
-      });
-
-      if (!response.ok) {
-        console.warn('⚠️ Failed to fetch Blinks, using mock data');
-        return this.getMockBlinks(category);
-      }
-
-      const data = await response.json();
-      return data.blinks || [];
-    } catch (error) {
-      console.warn('⚠️ Error fetching Blinks, using mock data:', error);
-      return this.getMockBlinks(category);
-    }
+    // Use real Blinks service and map previews to BlinkAction shape
+    const previews = await this.blinksService.getPopularBlinks(category);
+    return previews.map((p) => ({
+      id: p.context.url || p.links?.blink || p.title,
+      title: p.title,
+      description: p.description,
+      url: p.context?.url || p.links?.blink,
+      category: p.context?.category || 'Other',
+      provider: p.context?.provider?.name || 'Unknown',
+      parameters: [],
+      estimatedGas: 'unknown',
+      estimatedTime: 'unknown',
+      icon: p.context?.provider?.icon,
+    }));
   }
 
   /**
    * Get mock Blinks data for development
    */
-  private getMockBlinks(category?: string): BlinkAction[] {
-    const mockBlinks: BlinkAction[] = [
-      {
-        id: 'kamino-deposit',
-        title: 'Kamino Deposit',
-        description: 'Deposit tokens to earn yield on Kamino Finance',
-        url: 'https://kamino.dial.to/deposit',
-        category: 'DeFi',
-        provider: 'Kamino',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to deposit' },
-          { name: 'token', type: 'string', required: true, description: 'Token to deposit (SOL, USDC, etc.)' },
-        ],
-        estimatedGas: '0.001 SOL',
-        estimatedTime: '30 seconds',
-        icon: 'https://kamino.finance/favicon.ico',
-      },
-      {
-        id: 'marginfi-deposit',
-        title: 'MarginFi Deposit',
-        description: 'Deposit tokens to earn yield on MarginFi',
-        url: 'https://marginfi.dial.to/deposit',
-        category: 'DeFi',
-        provider: 'MarginFi',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to deposit' },
-          { name: 'token', type: 'string', required: true, description: 'Token to deposit' },
-        ],
-        estimatedGas: '0.001 SOL',
-        estimatedTime: '30 seconds',
-        icon: 'https://marginfi.com/favicon.ico',
-      },
-      {
-        id: 'jito-stake',
-        title: 'Jito Stake',
-        description: 'Stake SOL with Jito for MEV rewards',
-        url: 'https://jito.dial.to/stake',
-        category: 'Staking',
-        provider: 'Jito',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to stake' },
-        ],
-        estimatedGas: '0.002 SOL',
-        estimatedTime: '45 seconds',
-        icon: 'https://jito.wtf/favicon.ico',
-      },
-      {
-        id: 'raydium-swap',
-        title: 'Raydium Swap',
-        description: 'Swap tokens on Raydium DEX',
-        url: 'https://raydium.dial.to/swap',
-        category: 'Trading',
-        provider: 'Raydium',
-        parameters: [
-          { name: 'inputToken', type: 'string', required: true, description: 'Input token address' },
-          { name: 'outputToken', type: 'string', required: true, description: 'Output token address' },
-          { name: 'amount', type: 'number', required: true, description: 'Amount to swap' },
-          { name: 'slippage', type: 'number', required: false, description: 'Slippage tolerance (%)', defaultValue: 0.5 },
-        ],
-        estimatedGas: '0.003 SOL',
-        estimatedTime: '60 seconds',
-        icon: 'https://raydium.io/favicon.ico',
-      },
-    ];
-
-    if (category) {
-      return mockBlinks.filter(blink => blink.category.toLowerCase() === category.toLowerCase());
-    }
-
-    return mockBlinks;
-  }
+  // Removed inline mock blinks; source from real Blinks service above
 
   /**
    * Get market data from Dialect's Markets API
@@ -252,88 +197,39 @@ export class DialectMCPService extends EventEmitter {
     minApy?: number;
     maxApy?: number;
   }): Promise<MarketData[]> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.protocol) params.append('protocol', filters.protocol);
-      if (filters?.token) params.append('token', filters.token);
-      if (filters?.minApy) params.append('minApy', filters.minApy.toString());
-      if (filters?.maxApy) params.append('maxApy', filters.maxApy.toString());
-
-      const response = await fetch(`${this.baseUrl}/v0/markets?${params}`, {
-        headers: {
-          'x-dialect-api-key': this.config.apiKey,
-        },
-      });
-
-      if (!response.ok) {
-        console.warn('⚠️ Failed to fetch market data, using mock data');
-        return this.getMockMarketData(filters);
-      }
-
-      const data = await response.json();
-      return data.markets || [];
-    } catch (error) {
-      console.warn('⚠️ Error fetching market data, using mock data:', error);
-      return this.getMockMarketData(filters);
-    }
+    const result = await this.marketsService.getMarkets({
+      protocol: filters?.protocol,
+      tokenSymbol: filters?.token,
+      minApy: filters?.minApy,
+      maxApy: filters?.maxApy,
+    });
+    return result.markets.map((m) => ({
+      id: m.id,
+      protocol: m.protocol,
+      token: {
+        symbol: m.token.symbol,
+        name: m.token.name,
+        address: m.token.address,
+        decimals: m.token.decimals,
+        logoUri: m.token.logo,
+      },
+      apy: {
+        supply: m.apy.supply,
+        borrow: m.apy.borrow ?? 0,
+      },
+      tvl: m.tvl,
+      limits: {
+        deposit: m.borrowLimit ?? 0,
+        borrow: m.totalBorrow ?? 0,
+      },
+      blinks: m.blinks,
+    }));
   }
 
   /**
    * Get mock market data for development
    */
-  private getMockMarketData(filters?: any): MarketData[] {
-    const mockMarkets: MarketData[] = [
-      {
-        id: '1',
-        protocol: 'Kamino',
-        token: {
-          symbol: 'SOL',
-          name: 'Solana',
-          address: 'So11111111111111111111111111111111111111112',
-          decimals: 9,
-          logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
-        },
-        apy: { supply: 8.5, borrow: 12.3 },
-        tvl: 1250000000,
-        limits: { deposit: 1000000, borrow: 800000 },
-        blinks: {
-          deposit: 'https://kamino.dial.to/deposit',
-          withdraw: 'https://kamino.dial.to/withdraw',
-        },
-      },
-      {
-        id: '2',
-        protocol: 'MarginFi',
-        token: {
-          symbol: 'USDC',
-          name: 'USD Coin',
-          address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-          decimals: 6,
-          logoUri: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
-        },
-        apy: { supply: 6.2, borrow: 9.8 },
-        tvl: 850000000,
-        limits: { deposit: 2000000, borrow: 1500000 },
-        blinks: {
-          deposit: 'https://marginfi.dial.to/deposit',
-          withdraw: 'https://marginfi.dial.to/withdraw',
-        },
-      },
-    ];
-
-    // Apply filters
-    if (filters) {
-      return mockMarkets.filter(market => {
-        if (filters.protocol && market.protocol !== filters.protocol) return false;
-        if (filters.token && market.token.symbol !== filters.token) return false;
-        if (filters.minApy && market.apy.supply < filters.minApy) return false;
-        if (filters.maxApy && market.apy.supply > filters.maxApy) return false;
-        return true;
-      });
-    }
-
-    return mockMarkets;
-  }
+  // Removed inline mock market data; source from real Markets service above
 
   /**
    * Execute a Blink action
@@ -343,55 +239,22 @@ export class DialectMCPService extends EventEmitter {
     transactionId?: string;
     error?: string;
   }> {
-    try {
-      console.log(`🚀 Executing Blink: ${blinkUrl}`);
-      console.log(`📝 Parameters:`, parameters);
-      console.log(`👛 Wallet: ${walletAddress}`);
-
-      // In a real implementation, this would:
-      // 1. Validate the Blink URL
-      // 2. Prepare the transaction
-      // 3. Sign and send the transaction
-      // 4. Return the transaction ID
-
-      // For now, simulate execution
-      const mockTransactionId = `mock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      console.log(`✅ Blink executed successfully`);
-      console.log(`📄 Transaction ID: ${mockTransactionId}`);
-
-      return {
-        success: true,
-        transactionId: mockTransactionId,
-      };
-    } catch (error) {
-      console.error('❌ Failed to execute Blink:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+    const result = await this.blinksService.executeBlinkAction(blinkUrl, walletAddress, parameters);
+    if (result.success) {
+      return { success: true, transactionId: result.transaction };
     }
+    return { success: false, error: result.error || 'Execution failed' };
   }
 
   /**
    * Create a custom alert template
    */
   async createAlertTemplate(template: AlertTemplate): Promise<AlertTemplate> {
-    try {
-      console.log(`📝 Creating alert template: ${template.title}`);
-      
-      // In a real implementation, this would save to Dialect's system
-      const createdTemplate = {
-        ...template,
-        id: `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      };
-
-      console.log(`✅ Alert template created: ${createdTemplate.id}`);
-      return createdTemplate;
-    } catch (error) {
-      console.error('❌ Failed to create alert template:', error);
-      throw error;
-    }
+    // Dialect Alerts API does not persist templates server-side; return sanitized passthrough
+    return {
+      ...template,
+      id: template.id || `template_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+    };
   }
 
   /**
@@ -403,28 +266,40 @@ export class DialectMCPService extends EventEmitter {
     error?: string;
   }> {
     try {
-      console.log(`📤 Sending alert using template: ${templateId}`);
-      console.log(`👥 Recipients: ${recipients.length} users`);
-      
-      // In a real implementation, this would:
-      // 1. Fetch the template
-      // 2. Customize with provided data
-      // 3. Send to Dialect's alert system
-      
-      const mockAlertId = `alert_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      console.log(`✅ Alert sent successfully: ${mockAlertId}`);
-      
-      return {
-        success: true,
-        alertId: mockAlertId,
-      };
+      // Construct a minimal message from templateId and customData
+      const message = {
+        channels: ['IN_APP'],
+        message: {
+          title: customData?.title || templateId,
+          body: customData?.body || 'Notification',
+          image: customData?.image || '',
+          actions: customData?.actions || [],
+        },
+      } as any;
+
+      // Use batch sending when multiple recipients
+      if (recipients.length > 1) {
+        const batch = {
+          alerts: recipients.map((walletAddress) => ({
+            ...message,
+            recipient: {
+              type: 'WALLET',
+              walletAddress,
+            },
+          })),
+        } as any;
+        const res = await this.alertsService.sendBatchAlerts(batch);
+        return { success: res.success, alertId: res.batchId } as any;
+      } else {
+        const res = await this.alertsService.sendAlert({
+          channels: message.channels,
+          message: message.message,
+          recipient: { type: 'WALLET', walletAddress: recipients[0]! },
+        } as any);
+        return { success: res.success, alertId: res.messageId };
+      }
     } catch (error) {
-      console.error('❌ Failed to send alert:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
 
@@ -439,36 +314,8 @@ export class DialectMCPService extends EventEmitter {
       category: string;
     }>;
   }> {
-    try {
-      console.log(`🔍 Searching documentation for: ${query}`);
-      
-      // Mock documentation search results
-      const mockResults = [
-        {
-          title: 'Blinks Quickstart',
-          url: 'https://docs.dialect.to/blinks/quickstart',
-          snippet: 'Learn how to create and integrate Blinks in your application...',
-          category: 'Blinks',
-        },
-        {
-          title: 'Alerts API Reference',
-          url: 'https://docs.dialect.to/alerts/api',
-          snippet: 'Complete API reference for sending notifications...',
-          category: 'Alerts',
-        },
-        {
-          title: 'Markets API Guide',
-          url: 'https://docs.dialect.to/markets/api',
-          snippet: 'Access real-time market data from Solana protocols...',
-          category: 'Markets',
-        },
-      ];
-
-      return { results: mockResults };
-    } catch (error) {
-      console.error('❌ Failed to search documentation:', error);
-      return { results: [] };
-    }
+    // No server-side docs search API available; return empty results without mocks
+    return { results: [] };
   }
 
   /**
@@ -483,9 +330,10 @@ export class DialectMCPService extends EventEmitter {
       connected: this.isConnected,
       config: {
         baseUrl: this.baseUrl,
-        apiKey: this.config.apiKey ? 'configured' : 'missing',
-        clientKey: this.config.clientKey ? 'configured' : 'missing',
-        appId: this.config.appId ? 'configured' : 'missing',
+        // Align with frontend expectations: booleans named hasApiKey/hasClientKey/hasAppId
+        hasApiKey: Boolean(this.config.apiKey),
+        hasClientKey: Boolean(this.config.clientKey),
+        hasAppId: Boolean(this.config.appId),
       },
       capabilities: [
         'blinks-execution',

@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import Skeleton from '@/components/Skeleton';
+import Tooltip from '@/components/Tooltip';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -90,10 +93,14 @@ export default function DialectDashboard() {
     try {
       setIsLoading(true);
       const response = await fetch('/api/dialect/markets');
-      const data = await response.json();
-      if (data.markets) {
-        setMarkets(data.markets);
+      if (response.status === 503) {
+        const data = await response.json().catch(() => ({}));
+        setError(data.hint || 'Dialect Markets not configured. Set DIALECT_API_KEY on backend.');
+        setMarkets([]);
+        return;
       }
+      const data = await response.json();
+      if (data.markets) setMarkets(data.markets);
     } catch (error) {
       console.error('Failed to fetch markets:', error);
       setError('Failed to fetch markets data');
@@ -126,10 +133,14 @@ export default function DialectDashboard() {
     try {
       setIsLoading(true);
       const response = await fetch('/api/dialect/blinks/popular');
-      const data = await response.json();
-      if (data.blinks) {
-        setBlinks(data.blinks);
+      if (response.status === 503) {
+        const data = await response.json().catch(() => ({}));
+        setError(data.hint || 'Dialect Blinks not configured. Set DIALECT_API_KEY on backend.');
+        setBlinks([]);
+        return;
       }
+      const data = await response.json();
+      if (data.blinks) setBlinks(data.blinks);
     } catch (error) {
       console.error('Failed to fetch blinks:', error);
       setError('Failed to fetch blinks data');
@@ -263,7 +274,16 @@ export default function DialectDashboard() {
       {error && (
         <Alert variant="destructive">
           <XCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error}
+            {/not configured/i.test(error) && (
+              <>
+                {' '}— Go to{' '}
+                <a href="/settings" className="underline hover:opacity-80">Settings</a>
+                {' '}to configure Dialect keys.
+              </>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -296,42 +316,55 @@ export default function DialectDashboard() {
               <Search className="w-4 h-4 mr-2" />
               Search
             </Button>
+            <Tooltip content={'Search by token symbol, name, or protocol'} />
             <Button onClick={fetchMarkets} variant="outline" disabled={isLoading}>
               Refresh
             </Button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {markets.map((market) => (
-              <Card key={market.id}>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">{market.token.symbol}</CardTitle>
-                    <Badge variant="secondary">{market.protocol}</Badge>
-                  </div>
-                  <CardDescription>{market.token.name}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Supply APY</span>
-                    <span className="font-medium text-green-600">
-                      {formatPercentage(market.apy.supply)}
-                    </span>
-                  </div>
-                  {market.apy.borrow && (
+            {isLoading && (
+              Array.from({ length: 6 }).map((_, i) => (
+                <div key={`m-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                  <Skeleton className="h-5 w-32 mb-3" />
+                  <Skeleton className="h-3 w-48 mb-4" />
+                  <Skeleton className="h-3 w-full mb-2" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+              ))
+            )}
+            {!isLoading && markets.map((market) => (
+              <motion.div key={market.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">{market.token.symbol}</CardTitle>
+                      <Badge variant="secondary">{market.protocol}</Badge>
+                    </div>
+                    <CardDescription>{market.token.name}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
                     <div className="flex justify-between">
-                      <span className="text-sm text-muted-foreground">Borrow APY</span>
-                      <span className="font-medium text-red-600">
-                        {formatPercentage(market.apy.borrow)}
+                      <span className="text-sm text-muted-foreground">Supply APY</span>
+                      <span className="font-medium text-green-600">
+                        {formatPercentage(market.apy.supply)}
                       </span>
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">TVL</span>
-                    <span className="font-medium">{formatCurrency(market.tvl)}</span>
-                  </div>
-                </CardContent>
-              </Card>
+                    {market.apy.borrow && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">Borrow APY</span>
+                        <span className="font-medium text-red-600">
+                          {formatPercentage(market.apy.borrow)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">TVL</span>
+                      <span className="font-medium">{formatCurrency(market.tvl)}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
             ))}
           </div>
         </TabsContent>
@@ -374,7 +407,7 @@ export default function DialectDashboard() {
                     )}
                     {position.position.healthFactor && (
                       <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Health Factor</span>
+                        <span className="text-sm text-muted-foreground flex items-center gap-1">Health Factor <Tooltip content={'< 1.0 means liquidation risk; > 1.5 considered safer'} /></span>
                         <span className={`font-medium ${getHealthFactorColor(position.position.healthFactor)}`}>
                           {position.position.healthFactor.toFixed(2)}
                         </span>
@@ -396,48 +429,59 @@ export default function DialectDashboard() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {blinks.map((blink, index) => {
+            {isLoading && (
+              Array.from({ length: 6 }).map((_, i) => (
+                <div key={`b-skel-${i}`} className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                  <Skeleton className="h-5 w-40 mb-3" />
+                  <Skeleton className="h-3 w-24 mb-4" />
+                  <Skeleton className="h-32 w-full" />
+                </div>
+              ))
+            )}
+            {!isLoading && blinks.map((blink, index) => {
               const providerName = blink.context?.provider?.name ?? 'Unknown Provider';
               const providerIcon = blink.context?.provider?.icon ?? '/vite.svg';
               const blinkUrl = blink.links?.blink ?? undefined;
               const category = blink.context?.category ?? 'General';
 
               return (
-                <Card key={index}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center space-x-3">
-                      <img
-                        src={providerIcon}
-                        alt={providerName}
-                        className="w-8 h-8 rounded"
-                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                      />
-                      <div>
-                        <CardTitle className="text-lg">{blink.title ?? 'Untitled Blink'}</CardTitle>
-                        <CardDescription>{providerName}</CardDescription>
+                <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center space-x-3">
+                        <img
+                          src={providerIcon}
+                          alt={providerName}
+                          className="w-8 h-8 rounded"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <div>
+                          <CardTitle className="text-lg">{blink.title ?? 'Untitled Blink'}</CardTitle>
+                          <CardDescription>{providerName}</CardDescription>
+                        </div>
                       </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <p className="text-sm text-muted-foreground">{blink.description ?? ''}</p>
-                    <div className="flex items-center justify-between">
-                      <Badge variant="outline">{category}</Badge>
-                      {blinkUrl ? (
-                        <Button size="sm" asChild>
-                          <a href={blinkUrl} target="_blank" rel="noopener noreferrer">
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <p className="text-sm text-muted-foreground">{blink.description ?? ''}</p>
+                      <div className="flex items-center justify-between">
+                        <Badge variant="outline">{category}</Badge>
+                        {blinkUrl ? (
+                          <Button size="sm" asChild>
+                            <a href={blinkUrl} target="_blank" rel="noopener noreferrer">
+                              <Zap className="w-4 h-4 mr-2" />
+                              {blink.cta ?? 'Open'}
+                            </a>
+                          </Button>
+                        ) : (
+                          <Button size="sm" disabled>
                             <Zap className="w-4 h-4 mr-2" />
-                            {blink.cta ?? 'Open'}
-                          </a>
-                        </Button>
-                      ) : (
-                        <Button size="sm" disabled>
-                          <Zap className="w-4 h-4 mr-2" />
-                          Unavailable
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                            Unavailable
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
               );
             })}
           </div>

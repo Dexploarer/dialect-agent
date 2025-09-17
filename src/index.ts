@@ -2,8 +2,11 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { serveStatic } from "hono/bun";
+import { createHmac, timingSafeEqual } from "crypto";
 
 import { streamText } from "hono/streaming";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import { config } from "dotenv";
@@ -21,7 +24,8 @@ import {
   initializeEmbeddingService,
   getEmbeddingService,
 } from "./lib/embeddings.js";
-import { initializeAIService, getAIService } from "./lib/ai.js";
+import { initializeAIService, getAIService, getAIServiceOrThrow } from "./lib/ai.js";
+import { initializeQueues, enqueueDialectEvents, queuesReady } from "./lib/queue.js";
 
 // Import types
 import type { CoreMessage } from "ai";
@@ -49,6 +53,11 @@ import { createDialectMonitoringService } from "./lib/dialect-monitoring-service
 
 const app = new Hono();
 
+// Helper: always return AI service instance
+function getAIServiceOrThrow() {
+  return getAIService();
+}
+
 // Middleware
 app.use("*", logger());
 app.use("*", prettyJSON());
@@ -61,11 +70,17 @@ app.use(
 );
 
 // Request validation schemas
+const MessagePartSchema = z.union([
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('image'), image: z.string() }), // data URL or URL
+  z.object({ type: z.literal('file'), data: z.string(), mediaType: z.string().optional() }),
+]);
+
 const ChatRequestSchema = z.object({
   messages: z.array(
     z.object({
-      role: z.enum(["user", "assistant", "system"]),
-      content: z.string(),
+      role: z.enum(["user", "assistant", "system", "tool"]),
+      content: z.union([z.string(), z.array(MessagePartSchema)]),
     }),
   ),
   model: z.string().optional(),
@@ -73,6 +88,9 @@ const ChatRequestSchema = z.object({
   maxTokens: z.number().min(1).max(8000).optional(),
   stream: z.boolean().optional(),
   enableRag: z.boolean().optional(),
+  toolsEnabled: z.boolean().optional(),
+  responseType: z.enum(['text', 'object']).optional(),
+  jsonSchema: z.record(z.any()).optional(),
   conversationId: z.string().optional(),
 });
 
@@ -98,7 +116,7 @@ const ConversationRequestSchema = z.object({
 app.get("/health", async (c) => {
   try {
     const dbStats = getDatabaseManager().getStats();
-    const aiHealth = await getAIService().healthCheck();
+    const aiHealth = await getAIServiceOrThrow().healthCheck();
     const embeddingService = getEmbeddingService();
 
     return c.json({
@@ -127,6 +145,138 @@ app.get("/health", async (c) => {
   }
 });
 
+// Streamed object output endpoint
+app.post("/api/chat/object/stream", async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = ChatRequestSchema.parse(body);
+    const { messages, model, temperature, maxTokens, enableRag, toolsEnabled, jsonSchema } = parsed;
+    if (!jsonSchema) {
+      return c.json({ error: "jsonSchema is required" }, 400);
+    }
+
+    const aiService = getAIServiceOrThrow();
+    return streamText(c, async (stream) => {
+      try {
+        const { result } = await aiService.generateObjectStreamWithJsonSchema(
+          messages as CoreMessage[],
+          jsonSchema,
+          {
+            ...(model && { model }),
+            ...(temperature !== undefined && { temperature }),
+            ...(maxTokens !== undefined && { maxTokens }),
+            ...(enableRag !== undefined && { enableRag }),
+            ...(toolsEnabled !== undefined && { toolsEnabled }),
+          },
+        );
+
+        let finishReason: string | undefined;
+        let usage: any | undefined;
+
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta') {
+            await stream.write(part.textDelta);
+          } else if (part.type === 'finish') {
+            finishReason = part.finishReason as any;
+            usage = part.usage;
+          }
+        }
+
+        if (finishReason || usage) {
+          try {
+            await stream.write("\n\n[METADATA]" + JSON.stringify({ finishReason, usage }));
+          } catch {}
+        }
+      } catch (error) {
+        await stream.write(
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to stream object output",
+      },
+      500,
+    );
+  }
+});
+
+// AI Models + Config endpoints
+app.get("/api/ai/models", async (c) => {
+  try {
+    const textModels = [
+      { id: "openai/gpt-4o", label: "OpenAI · GPT-4o" },
+      { id: "openai/gpt-4o-mini", label: "OpenAI · GPT-4o mini" },
+      { id: "openai/gpt-4-turbo", label: "OpenAI · GPT-4 Turbo" },
+      { id: "anthropic/claude-3-5-sonnet-20241022", label: "Anthropic · Claude 3.5 Sonnet (2024-10-22)" },
+      { id: "anthropic/claude-3-opus-20240229", label: "Anthropic · Claude 3 Opus" },
+      { id: "anthropic/claude-3-sonnet-20240229", label: "Anthropic · Claude 3 Sonnet" },
+      { id: "anthropic/claude-3-haiku-20240307", label: "Anthropic · Claude 3 Haiku" },
+    ];
+    const embeddingModels = [
+      { id: "openai/text-embedding-3-small", label: "OpenAI · text-embedding-3-small (1536d)" },
+      { id: "openai/text-embedding-3-large", label: "OpenAI · text-embedding-3-large (3072d)" },
+      { id: "openai/text-embedding-ada-002", label: "OpenAI · text-embedding-ada-002 (legacy)" },
+    ];
+    return c.json({ textModels, embeddingModels });
+  } catch (error) {
+    return c.json({ error: "Failed to fetch models" }, 500);
+  }
+});
+
+app.get("/api/ai/config", async (c) => {
+  try {
+    const svc = getAIServiceOrThrow();
+    const emb = getEmbeddingService();
+    return c.json({
+      textModel: svc.getConfig().defaultModel,
+      embeddingModel: emb.getConfig().model,
+      ragEnabled: svc.getConfig().enableRag,
+      temperature: svc.getConfig().temperature,
+      maxTokens: svc.getConfig().maxTokens,
+      webFetchUnrestricted: svc.getConfig().webFetch.unrestricted,
+      webFetchAllowlist: svc.getConfig().webFetch.allowlist,
+      webFetchMaxBytes: svc.getConfig().webFetch.maxBytes,
+      webFetchTimeoutMs: svc.getConfig().webFetch.timeoutMs,
+    });
+  } catch (error) {
+    return c.json({ error: "Failed to get AI config" }, 500);
+  }
+});
+
+app.patch("/api/ai/config", async (c) => {
+  try {
+    const { textModel, embeddingModel, ragEnabled, temperature, maxTokens, webFetchUnrestricted, webFetchAllowlist, webFetchMaxBytes, webFetchTimeoutMs } = await c.req.json();
+    if (textModel) {
+      getAIServiceOrThrow().updateConfig({ defaultModel: textModel });
+    }
+    if (embeddingModel) {
+      getEmbeddingService().updateConfig({ model: embeddingModel });
+    }
+    const updates: any = {};
+    if (typeof ragEnabled === 'boolean') updates.enableRag = ragEnabled;
+    if (typeof temperature === 'number') updates.temperature = temperature;
+    if (typeof maxTokens === 'number') updates.maxTokens = maxTokens;
+    if (typeof webFetchUnrestricted === 'boolean' || Array.isArray(webFetchAllowlist) || typeof webFetchMaxBytes === 'number' || typeof webFetchTimeoutMs === 'number') {
+      updates.webFetch = {
+        ...(getAIServiceOrThrow().getConfig().webFetch),
+        ...(typeof webFetchUnrestricted === 'boolean' ? { unrestricted: webFetchUnrestricted } : {}),
+        ...(Array.isArray(webFetchAllowlist) ? { allowlist: webFetchAllowlist } : {}),
+        ...(typeof webFetchMaxBytes === 'number' ? { maxBytes: webFetchMaxBytes } : {}),
+        ...(typeof webFetchTimeoutMs === 'number' ? { timeoutMs: webFetchTimeoutMs } : {}),
+      };
+    }
+    if (Object.keys(updates).length > 0) {
+      getAIServiceOrThrow().updateConfig(updates);
+    }
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: "Failed to update AI config" }, 500);
+  }
+});
+
 // Chat completion endpoint
 app.post("/api/chat", async (c) => {
   try {
@@ -138,11 +288,30 @@ app.post("/api/chat", async (c) => {
       maxTokens,
       stream,
       enableRag,
+      toolsEnabled,
+      responseType,
+      jsonSchema,
       conversationId,
     } = ChatRequestSchema.parse(body);
 
-    const aiService = getAIService();
+    const aiService = getAIServiceOrThrow();
     const dbManager = getDatabaseManager();
+
+    // If requesting structured object response
+    if (responseType === 'object' && jsonSchema && !stream) {
+      const { object, ragContext } = await aiService.generateObjectWithJsonSchema(
+        messages as CoreMessage[],
+        jsonSchema,
+        {
+          ...(model && { model }),
+          ...(temperature !== undefined && { temperature }),
+          ...(maxTokens !== undefined && { maxTokens }),
+          ...(enableRag !== undefined && { enableRag }),
+          ...(toolsEnabled !== undefined && { toolsEnabled }),
+        },
+      );
+      return c.json({ object, ragContext });
+    }
 
     // Handle streaming response
     if (stream) {
@@ -155,16 +324,25 @@ app.post("/api/chat", async (c) => {
                 ...(model && { model }), 
                 ...(temperature !== undefined && { temperature }), 
                 ...(maxTokens !== undefined && { maxTokens }), 
-                ...(enableRag !== undefined && { enableRag })
+                ...(enableRag !== undefined && { enableRag }),
+                ...(toolsEnabled !== undefined && { toolsEnabled }),
               },
             );
 
           let fullResponse = "";
+          let finishReason: string | undefined;
+          let usage: any | undefined;
 
           for await (const chunk of textStream.textStream) {
             fullResponse += chunk;
             await stream.write(chunk);
           }
+
+          // Attach finish metadata
+          try {
+            finishReason = (await (textStream as any).finishReason) as any;
+            usage = await (textStream as any).usage;
+          } catch {}
 
           // Save conversation if ID provided
           if (conversationId) {
@@ -175,8 +353,15 @@ app.post("/api/chat", async (c) => {
               conversationId,
               "assistant",
               fullResponse,
-              JSON.stringify({ ragContext }),
+              JSON.stringify({ ragContext, finishReason, usage }),
             );
+          }
+
+          // Append metadata trailer for clients that care
+          if (finishReason || usage) {
+            try {
+              await stream.write("\n\n[METADATA]" + JSON.stringify({ finishReason, usage }));
+            } catch {}
           }
         } catch (error) {
           await stream.write(
@@ -187,13 +372,14 @@ app.post("/api/chat", async (c) => {
     }
 
     // Handle non-streaming response
-    const { content, ragContext } = await aiService.generateChatCompletion(
+    const { content, ragContext, finishReason, usage } = await aiService.generateChatCompletion(
       messages as CoreMessage[],
       { 
         ...(model && { model }), 
         ...(temperature !== undefined && { temperature }), 
         ...(maxTokens !== undefined && { maxTokens }), 
-        ...(enableRag !== undefined && { enableRag })
+        ...(enableRag !== undefined && { enableRag }),
+        ...(toolsEnabled !== undefined && { toolsEnabled }),
       },
     );
 
@@ -223,6 +409,8 @@ app.post("/api/chat", async (c) => {
             })),
           }
         : undefined,
+      finishReason,
+      usage,
     });
   } catch (error) {
     console.error("Chat error:", error);
@@ -233,6 +421,101 @@ app.post("/api/chat", async (c) => {
       },
       500,
     );
+  }
+});
+
+// SSE wrapper for text streaming
+app.post("/api/chat/stream-sse", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { messages, model, temperature, maxTokens, enableRag, toolsEnabled } = ChatRequestSchema.parse(body);
+
+    const aiService = getAIServiceOrThrow();
+    const { stream: textStream } = await aiService.generateStreamingCompletion(
+      messages as CoreMessage[],
+      {
+        ...(model && { model }),
+        ...(temperature !== undefined && { temperature }),
+        ...(maxTokens !== undefined && { maxTokens }),
+        ...(enableRag !== undefined && { enableRag }),
+        ...(toolsEnabled !== undefined && { toolsEnabled }),
+      },
+    );
+
+    return streamSSE(c, async (sse) => {
+      try {
+        for await (const part of (textStream as any).fullStream) {
+          switch (part.type) {
+            case 'start':
+              await sse.writeSSE({ event: 'start', data: '{}' });
+              break;
+            case 'text-delta':
+              await sse.writeSSE({ event: 'delta', data: JSON.stringify({ text: part.text }) });
+              break;
+            case 'tool-call':
+              await sse.writeSSE({ event: 'tool-call', data: JSON.stringify(part) });
+              break;
+            case 'tool-result':
+              await sse.writeSSE({ event: 'tool-result', data: JSON.stringify(part) });
+              break;
+            case 'finish':
+              await sse.writeSSE({ event: 'finish', data: JSON.stringify({ finishReason: part.finishReason, totalUsage: part.totalUsage }) });
+              break;
+            case 'error':
+              await sse.writeSSE({ event: 'error', data: JSON.stringify({ error: (part.error && (part.error.message || String(part.error))) || 'Unknown error' }) });
+              break;
+            default:
+              break;
+          }
+        }
+      } catch (err) {
+        await sse.writeSSE({ event: 'error', data: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) });
+      }
+    });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to stream SSE' }, 500);
+  }
+});
+
+// SSE wrapper for object streaming
+app.post("/api/chat/object/stream-sse", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { messages, model, temperature, maxTokens, enableRag, toolsEnabled, jsonSchema } = ChatRequestSchema.parse(body);
+    if (!jsonSchema) return c.json({ error: 'jsonSchema is required' }, 400);
+
+    const aiService = getAIServiceOrThrow();
+    const { result } = await aiService.generateObjectStreamWithJsonSchema(
+      messages as CoreMessage[],
+      jsonSchema,
+      {
+        ...(model && { model }),
+        ...(temperature !== undefined && { temperature }),
+        ...(maxTokens !== undefined && { maxTokens }),
+        ...(enableRag !== undefined && { enableRag }),
+        ...(toolsEnabled !== undefined && { toolsEnabled }),
+      },
+    );
+
+    return streamSSE(c, async (sse) => {
+      try {
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta') {
+            await sse.writeSSE({ event: 'delta', data: JSON.stringify({ text: part.textDelta }) });
+          } else if (part.type === 'object') {
+            await sse.writeSSE({ event: 'partial', data: JSON.stringify(part.object) });
+          } else if (part.type === 'finish') {
+            await sse.writeSSE({ event: 'finish', data: JSON.stringify({ finishReason: part.finishReason, usage: part.usage }) });
+          } else if (part.type === 'error') {
+            await sse.writeSSE({ event: 'error', data: JSON.stringify({ error: part.error && (part.error.message || String(part.error)) }) });
+          }
+        }
+      } catch (err) {
+        await sse.writeSSE({ event: 'error', data: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) });
+      }
+    });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to stream object SSE' }, 500);
   }
 });
 
@@ -531,7 +814,7 @@ app.post("/api/summarize", async (c) => {
     const body = await c.req.json();
     const { content } = z.object({ content: z.string() }).parse(body);
 
-    const aiService = getAIService();
+    const aiService = getAIServiceOrThrow();
     const summary = await aiService.summarizeDocument(content);
 
     return c.json({ summary });
@@ -640,6 +923,102 @@ app.get("/api/agents/:id", async (c) => {
   }
 });
 
+// Seed an example agent with Dialect triggers
+app.post("/api/agents/seed-example", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as any;
+    const tokenSymbol = body.tokenSymbol || "SOL";
+    const thresholdPercentage = typeof body.thresholdPercentage === 'number' ? body.thresholdPercentage : 10;
+    const window = body.window || "24h";
+    const marketCapMin = typeof body.marketCapMin === 'number' ? body.marketCapMin : 5_000_000;
+    const liquidityMin = typeof body.liquidityMin === 'number' ? body.liquidityMin : 500_000;
+    const priceChange24hMin = typeof body.priceChange24hMin === 'number' ? body.priceChange24hMin : 5;
+
+    // Base actions
+    const actions = [
+      {
+        name: "AI Analysis",
+        description: "Analyze Dialect event",
+        type: "ai_response" as const,
+        configuration: {},
+        isActive: true,
+      },
+      {
+        name: "Notify (stub)",
+        description: "Send stub notification",
+        type: "send_notification" as const,
+        configuration: { channel: "IN_APP" },
+        isActive: true,
+      },
+    ];
+
+    // Create agent with actions first (no triggers so we can wire action IDs)
+    const agent = await agentManager.createAgent({
+      name: "Example Dialect Agent",
+      description: "Reacts to Dialect price change and trending token events",
+      aiConfig: {
+        model: "gpt-4o",
+        provider: "openai",
+        temperature: 0.7,
+        maxTokens: 800,
+        enableRag: true,
+        systemPrompt: "You are a proactive blockchain event analyst. Summarize incoming Dialect events and recommend next steps.",
+        contextMemory: 6,
+      },
+      actions,
+      eventTriggers: [],
+      settings: { enableDetailedLogging: true },
+    });
+
+    // Resolve created action IDs
+    const aiActionId = agent.actions.find((a) => a.name === "AI Analysis")?.id;
+    const notifyActionId = agent.actions.find((a) => a.name === "Notify (stub)")?.id;
+    if (!aiActionId || !notifyActionId) {
+      return c.json({ error: "Failed to create base actions" }, 500);
+    }
+
+    // Build triggers with real action IDs
+    const triggers = [
+      {
+        id: nanoid(),
+        name: `Price Surge ≥ ${thresholdPercentage}% (${window}) - ${tokenSymbol}`,
+        description: "On significant price change, analyze and notify",
+        isActive: true,
+        eventType: "token_price_change" as const,
+        conditions: [
+          { field: "parsedData.token.symbol", operator: "equals", value: tokenSymbol },
+          { field: "parsedData.changeNormalized.window", operator: "equals", value: window, logicalOperator: "AND" },
+          { field: "parsedData.changeNormalized.percentage", operator: "greater_than", value: thresholdPercentage, logicalOperator: "AND" },
+        ],
+        actions: [aiActionId, notifyActionId],
+        cooldown: 3600,
+        priority: "high" as const,
+      },
+      {
+        id: nanoid(),
+        name: "Trending Token High Quality",
+        description: "On trending token event, analyze and notify",
+        isActive: true,
+        eventType: "trending_token" as const,
+        conditions: [
+          { field: "parsedData.metrics.marketCap", operator: "greater_than", value: marketCapMin },
+          { field: "parsedData.metrics.liquidity", operator: "greater_than", value: liquidityMin, logicalOperator: "AND" },
+          { field: "parsedData.metrics.priceChange24h", operator: "greater_than", value: priceChange24hMin, logicalOperator: "AND" },
+        ],
+        actions: [aiActionId, notifyActionId],
+        cooldown: 7200,
+        priority: "medium" as const,
+      },
+    ];
+
+    const updated = await agentManager.updateAgent(agent.id, { eventTriggers: triggers });
+
+    return c.json({ agent: updated });
+  } catch (error) {
+    console.error("❌ Seed example agent error:", error);
+    return c.json({ error: "Failed to seed example agent" }, 500);
+  }
+});
 // Update agent
 app.put("/api/agents/:id", async (c) => {
   try {
@@ -772,19 +1151,104 @@ app.delete("/api/chat/:sessionId", async (c) => {
 // Dialect Webhook Endpoint
 app.post("/api/webhooks/dialect", async (c) => {
   try {
-    const webhookData = await c.req.json();
-    
-    // Process the webhook data through the DialectEventMonitor
-    if (agentManager && agentManager["dialectMonitor"]) {
-      agentManager["dialectMonitor"].processDialectWebhook(webhookData);
+    const signatureHeader = (process.env.DIALECT_WEBHOOK_SIGNATURE_HEADER || "X-Dialect-Signature").toLowerCase();
+    const encoding = (process.env.DIALECT_WEBHOOK_SIGNATURE_ENCODING || "hex").toLowerCase();
+    const strict = String(process.env.DIALECT_WEBHOOK_STRICT || "false").toLowerCase() === "true";
+    const secret = process.env.DIALECT_WEBHOOK_SECRET || "";
+
+    // Read raw body for signature verification
+    const rawText = await c.req.text();
+
+    // Verify signature when secret is present
+    if (secret) {
+      const provided = c.req.header(signatureHeader) || c.req.header(signatureHeader.toLowerCase());
+      if (!provided) {
+        const msg = `Missing webhook signature header: ${signatureHeader}`;
+        console.warn(`⚠️ ${msg}`);
+        return strict ? c.text(msg, 401) : c.text("OK", 200);
+      }
+
+      try {
+        const hmac = createHmac("sha256", secret).update(rawText).digest(encoding as "hex" | "base64");
+        // timing-safe compare
+        const a = Buffer.from(hmac, encoding as BufferEncoding);
+        const b = Buffer.from(provided, encoding as BufferEncoding);
+        const match = a.length === b.length && timingSafeEqual(a, b);
+        if (!match) {
+          console.warn("⚠️ Webhook signature verification failed");
+          return strict ? c.text("Invalid signature", 401) : c.text("OK", 200);
+        }
+      } catch (e) {
+        console.warn("⚠️ Webhook signature verification error:", e);
+        return strict ? c.text("Signature error", 401) : c.text("OK", 200);
+      }
     }
-    
-    // Always respond with 200 OK as required by Dialect
+
+    // Parse JSON after verification
+    const parsed = rawText ? JSON.parse(rawText) : {};
+    const events = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.events)
+        ? parsed.events
+        : parsed.event
+          ? [parsed]
+          : [];
+
+    // Enqueue for background processing; ack immediately to Dialect
+    if (events.length > 0 && queuesReady()) {
+      await enqueueDialectEvents(events);
+    } else if (agentManager && (agentManager as any)["dialectMonitor"]) {
+      // Fallback: process inline if queues not ready
+      (agentManager as any)["dialectMonitor"].processDialectWebhook(events);
+    }
+
+    // Respond 200 OK (Dialect typically expects 2xx to stop retries)
     return c.text("OK", 200);
   } catch (error) {
     console.error("❌ Dialect webhook error:", error);
-    // Still return 200 OK to prevent Dialect from retrying
-    return c.text("OK", 200);
+    // Still return 200 OK to prevent provider retry storms unless strict is set
+    const strict = String(process.env.DIALECT_WEBHOOK_STRICT || "false").toLowerCase() === "true";
+    return strict ? c.text("Error", 500) : c.text("OK", 200);
+  }
+});
+
+// Dialect Webhook Test Endpoint (echo + normalization + trigger matches)
+app.post("/api/webhooks/dialect/test", async (c) => {
+  try {
+    const rawText = await c.req.text();
+    const parsed = rawText ? JSON.parse(rawText) : {};
+    const events = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.events)
+        ? parsed.events
+        : parsed.event
+          ? [parsed]
+          : [];
+
+    // Preview normalized events
+    if (agentManager && (agentManager as any)["dialectMonitor"]) {
+      const monitor = (agentManager as any)["dialectMonitor"];
+      const normalized = monitor.previewNormalizedEvents(events);
+
+      // Compute matching triggers for each event
+      const matches = normalized.map((evt: any) => ({
+        eventId: evt.id,
+        type: evt.type,
+        matches: monitor.findMatchingTriggersForEvent(evt)
+          .map((m: any) => ({ agentId: m.agentId, trigger: { id: m.trigger.id, name: m.trigger.name } })),
+      }));
+
+      return c.json({
+        received: events.length,
+        normalized,
+        matches,
+      });
+    }
+
+    return c.json({ error: "Dialect monitor not initialized" }, 500);
+  } catch (error) {
+    console.error("❌ Dialect webhook test error:", error);
+    return c.json({ error: "Failed to process test payload" }, 500);
   }
 });
 
@@ -850,6 +1314,22 @@ app.get("/api/agents/:id/executions", async (c) => {
           error instanceof Error
             ? error.message
             : "Failed to fetch agent executions",
+      },
+      500,
+    );
+  }
+});
+
+// Get recent executions (all agents)
+app.get("/api/executions", async (c) => {
+  try {
+    const limit = parseInt(c.req.query("limit") || "50");
+    const executions = agentManager.getRecentExecutions(limit);
+    return c.json({ executions });
+  } catch (error) {
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to fetch executions",
       },
       500,
     );
@@ -975,6 +1455,12 @@ app.post("/api/dialect/alerts/broadcast", async (c) => {
 // Get all markets
 app.get("/api/dialect/markets", async (c) => {
   try {
+    if (!dialectMarketsService) {
+      return c.json({
+        error: "Dialect Markets service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const protocol = c.req.query("protocol");
     const type = c.req.query("type");
     const tokenSymbol = c.req.query("token");
@@ -1008,6 +1494,12 @@ app.get("/api/dialect/markets", async (c) => {
 // Get markets grouped by type
 app.get("/api/dialect/markets/grouped", async (c) => {
   try {
+    if (!dialectMarketsService) {
+      return c.json({
+        error: "Dialect Markets service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const result = await dialectMarketsService.getMarketsGroupedByType();
     return c.json({ markets: result });
   } catch (error) {
@@ -1023,6 +1515,12 @@ app.get("/api/dialect/markets/grouped", async (c) => {
 // Get market statistics
 app.get("/api/dialect/markets/stats", async (c) => {
   try {
+    if (!dialectMarketsService) {
+      return c.json({
+        error: "Dialect Markets service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const result = await dialectMarketsService.getMarketStats();
     return c.json(result);
   } catch (error) {
@@ -1038,6 +1536,12 @@ app.get("/api/dialect/markets/stats", async (c) => {
 // Search markets
 app.get("/api/dialect/markets/search", async (c) => {
   try {
+    if (!dialectMarketsService) {
+      return c.json({
+        error: "Dialect Markets service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const query = c.req.query("q");
     if (!query) {
       return c.json({ error: "Query parameter 'q' is required" }, 400);
@@ -1128,6 +1632,12 @@ app.get("/api/dialect/positions/:walletAddress/at-risk", async (c) => {
 // Get blink preview
 app.get("/api/dialect/blinks/preview", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const blinkUrl = c.req.query("url");
     if (!blinkUrl) {
       return c.json({ error: "URL parameter is required" }, 400);
@@ -1148,6 +1658,12 @@ app.get("/api/dialect/blinks/preview", async (c) => {
 // Get full blink data
 app.get("/api/dialect/blinks/data", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const blinkUrl = c.req.query("url");
     if (!blinkUrl) {
       return c.json({ error: "URL parameter is required" }, 400);
@@ -1168,6 +1684,12 @@ app.get("/api/dialect/blinks/data", async (c) => {
 // Get blink data table
 app.get("/api/dialect/blinks/data-table", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const blinkUrl = c.req.query("url");
     if (!blinkUrl) {
       return c.json({ error: "URL parameter is required" }, 400);
@@ -1188,6 +1710,12 @@ app.get("/api/dialect/blinks/data-table", async (c) => {
 // Execute blink action
 app.post("/api/dialect/blinks/execute", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const { blinkUrl, walletAddress, parameters } = await c.req.json();
     
     if (!blinkUrl || !walletAddress) {
@@ -1209,6 +1737,12 @@ app.post("/api/dialect/blinks/execute", async (c) => {
 // Get popular blinks
 app.get("/api/dialect/blinks/popular", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const category = c.req.query("category");
     const result = await dialectBlinksService.getPopularBlinks(category);
     return c.json({ blinks: result });
@@ -1225,6 +1759,12 @@ app.get("/api/dialect/blinks/popular", async (c) => {
 // Search blinks
 app.get("/api/dialect/blinks/search", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const query = c.req.query("q");
     if (!query) {
       return c.json({ error: "Query parameter 'q' is required" }, 400);
@@ -1245,6 +1785,12 @@ app.get("/api/dialect/blinks/search", async (c) => {
 // Get blinks by provider
 app.get("/api/dialect/blinks/provider/:provider", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const provider = c.req.param("provider");
     const result = await dialectBlinksService.getBlinksByProvider(provider);
     return c.json({ blinks: result });
@@ -1261,6 +1807,12 @@ app.get("/api/dialect/blinks/provider/:provider", async (c) => {
 // Validate blink URL
 app.get("/api/dialect/blinks/validate", async (c) => {
   try {
+    if (!dialectBlinksService) {
+      return c.json({
+        error: "Dialect Blinks service not configured",
+        hint: "Set DIALECT_API_KEY (and optionally DIALECT_API_URL) on the server",
+      }, 503);
+    }
     const url = c.req.query("url");
     if (!url) {
       return c.json({ error: "URL parameter is required" }, 400);
@@ -1378,10 +1930,11 @@ app.post("/api/dialect/auth/subscribe", async (c) => {
     }
     
     const token = authHeader.substring(7);
-    const { appId, channels } = await c.req.json();
+    const { appId: bodyAppId, channels } = await c.req.json();
+    const appId = bodyAppId || process.env.DIALECT_APP_ID;
     
     if (!appId) {
-      return c.json({ error: "appId is required" }, 400);
+      return c.json({ error: "appId is required (or set DIALECT_APP_ID)" }, 400);
     }
     
     const result = await dialectAuthService.subscribeToApp(token, appId, channels);
@@ -1881,6 +2434,14 @@ async function startServer() {
     await agentManager.initialize();
     console.log("✅ Agent manager initialized");
 
+    // Initialize queues (for offline/background processing)
+    try {
+      await initializeQueues(agentManager as any);
+      console.log("✅ Queues initialized");
+    } catch (error) {
+      console.warn("⚠️ Queue initialization failed:", error);
+    }
+
     // Setup graceful shutdown
     setupGracefulShutdown();
 
@@ -1915,6 +2476,13 @@ async function startServer() {
     console.log("  GET    /api/agents/:id         - Get agent");
     console.log("  PUT    /api/agents/:id         - Update agent");
     console.log("  DELETE /api/agents/:id         - Delete agent");
+    console.log("");
+    console.log("Utilities:");
+    console.log("  POST   /api/agents/seed-example - Create example agent with triggers");
+    console.log("");
+    console.log("Dialect Webhooks:");
+    console.log("  POST   /api/webhooks/dialect   - Webhook endpoint (prod)");
+    console.log("  POST   /api/webhooks/dialect/test - Test normalization + matches");
     console.log("");
     console.log("Agent Chat:");
     console.log("  POST   /api/agents/:id/chat    - Start chat session");
@@ -2275,6 +2843,12 @@ app.post("/api/dialect/monitoring/stop", async (c) => {
     return c.json({ error: "Failed to stop monitoring" }, 500);
   }
 });
+
+// Serve frontend (production) - after all API routes
+// Static assets
+app.use('/assets/*', serveStatic({ root: './frontend/dist' }));
+// SPA fallback to index.html
+app.get('*', serveStatic({ path: './frontend/dist/index.html' }));
 
 // Start the server
 startServer().catch(console.error);

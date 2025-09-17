@@ -130,9 +130,11 @@ function EventCard({ event }: { event: BlockchainEvent }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      layout
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 28, mass: 0.6 }}
       className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-600 transition-all duration-200"
     >
       <div className="flex items-start justify-between mb-3">
@@ -206,7 +208,7 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
             <ChartBarIcon className="w-6 h-6 text-blue-600 dark:text-blue-400" />
@@ -218,9 +220,9 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
             </p>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.05 }} className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
             <CheckCircleIcon className="w-6 h-6 text-green-600 dark:text-green-400" />
@@ -230,9 +232,9 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
             <p className="text-2xl font-bold text-gray-900 dark:text-white">{successRate}%</p>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.1 }} className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
             <BeakerIcon className="w-6 h-6 text-purple-600 dark:text-purple-400" />
@@ -242,9 +244,9 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
             <p className="text-2xl font-bold text-gray-900 dark:text-white">{stats.triggers}</p>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: 0.15 }} className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg">
             <GlobeAltIcon className="w-6 h-6 text-orange-600 dark:text-orange-400" />
@@ -254,7 +256,7 @@ function StatsGrid({ stats }: { stats: MonitoringStats }) {
             <p className="text-2xl font-bold text-gray-900 dark:text-white">{stats.uptime}%</p>
           </div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

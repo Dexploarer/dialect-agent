@@ -738,6 +738,11 @@ export class AgentManager extends EventEmitter {
       console.log(`${success ? '✅' : '❌'} Execution completed for agent ${agent.name} in ${totalExecutionTime}ms`);
       this.emit('agent_executed', result);
 
+      // Persist execution result
+      try { await this.saveExecutionToDatabase(result); } catch (e) {
+        console.warn('⚠️ Failed to persist execution:', e);
+      }
+
       return result;
 
     } catch (error) {
@@ -761,6 +766,11 @@ export class AgentManager extends EventEmitter {
 
       console.error(`❌ Execution failed for agent ${agent.name}:`, error);
       this.emit('execution_error', { result, error });
+
+      // Persist failed execution
+      try { await this.saveExecutionToDatabase(result); } catch (e) {
+        console.warn('⚠️ Failed to persist failed execution:', e);
+      }
 
       throw new ExecutionError(`Execution failed for agent ${agentId}`, agentId, 'EXECUTION_FAILED', { context, error });
     }
@@ -911,8 +921,78 @@ Please provide insights about what this event means and any recommended actions.
    * Execute other action types (stubs for now)
    */
   private async executeSendNotificationAction(action: AgentAction, context: ExecutionContext): Promise<any> {
-    console.log(`📢 Sending notification for action: ${action.name}`);
-    return { sent: true, type: 'notification' };
+    const config = action.configuration as any;
+
+    if (!this.dialectAlerts) {
+      console.warn('⚠️ Dialect Alerts service not available');
+      return { sent: false, reason: 'alerts_service_unavailable' };
+    }
+
+    // Build title/body from templates with variables from context
+    const variables = {
+      ...context.variables,
+      eventType: context.event.type,
+      tokenSymbol: context.event.parsedData?.token?.symbol,
+      percentage: context.event.parsedData?.changeNormalized?.percentage,
+      direction: context.event.parsedData?.change?.direction,
+      window: context.event.parsedData?.changeNormalized?.window,
+    } as Record<string, any>;
+
+    const channels = Array.isArray(config?.channels) && config.channels.length
+      ? config.channels
+      : ['IN_APP'];
+
+    const titleTemplate = config?.titleTemplate
+      ?? (context.event.type === 'token_price_change'
+        ? '{{tokenSymbol}} Price {{direction}} {{percentage}}%'
+        : 'Event: {{eventType}}');
+
+    const bodyTemplate = config?.bodyTemplate
+      ?? (context.event.type === 'token_price_change'
+        ? '{{tokenSymbol}} moved {{percentage}}% in the last {{window}}.'
+        : 'A Dialect event was detected: {{eventType}}');
+
+    const title = this.replaceVariables(String(titleTemplate), variables);
+    const body = this.replaceVariables(String(bodyTemplate), variables);
+
+    const walletAddress = config?.walletAddress
+      || variables.walletAddress
+      || variables.owner
+      || variables.recipient;
+
+    const type = (config?.type as 'price' | 'liquidation' | 'trading' | 'system')
+      || (context.event.type === 'token_price_change' ? 'price' : 'system');
+
+    try {
+      if (!walletAddress) {
+        // Fallback: broadcast if no recipient provided
+        const res = await this.dialectAlerts.broadcastMessage(title, body, channels);
+        return { sent: res.success, broadcast: true, messageId: res.messageId };
+      }
+
+      // Metadata hints for specialized notifications
+      const metadata: Record<string, unknown> = {
+        tokenSymbol: variables.tokenSymbol,
+        priceChange: variables.percentage,
+        direction: variables.direction,
+        window: variables.window,
+        eventType: context.event.type,
+      };
+
+      const ok = await this.sendDialectNotification(
+        String(walletAddress),
+        title,
+        body,
+        type,
+        channels,
+        metadata,
+      );
+
+      return { sent: ok, broadcast: false };
+    } catch (error) {
+      console.error('❌ Error sending Dialect notification:', error);
+      return { sent: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async executeTransactionAction(action: AgentAction, context: ExecutionContext): Promise<any> {
@@ -1251,6 +1331,19 @@ Please provide insights about what this event means and any recommended actions.
       ORDER BY created_at DESC
       LIMIT ?
     `, agentId, limit);
+  }
+
+  /**
+   * Get recent executions across all agents
+   */
+  getRecentExecutions(limit = 50): any[] {
+    const dbManager = getDatabaseManager();
+
+    return dbManager.query(`
+      SELECT * FROM agent_executions
+      ORDER BY created_at DESC
+      LIMIT ?
+    `, limit);
   }
 
   /**

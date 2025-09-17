@@ -1,5 +1,5 @@
 import { embed } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { createGateway } from "@ai-sdk/gateway";
 import { nanoid } from "nanoid";
 import { getDatabaseManager, transaction } from "../db/connection.js";
 import {
@@ -16,9 +16,10 @@ export interface EmbeddingConfig {
   batchSize: number;
   chunkSize: number;
   chunkOverlap: number;
-  provider: "openai";
+  provider: "gateway";
   apiKey?: string;
   aiGatewayUrl?: string;
+  aiGatewayOrder?: string[];
   dimensions: number;
 }
 
@@ -48,10 +49,21 @@ export class EmbeddingService {
   private embeddingModel: any = null;
   private isInitialized = false;
   private config: EmbeddingConfig;
+  private gatewayProvider = createGateway({
+    apiKey: process.env.AI_GATEWAY_API_KEY || undefined,
+    baseURL: (() => {
+      const raw = process.env.AI_GATEWAY_URL || undefined;
+      if (!raw) return undefined;
+      const trimmed = raw.replace(/\/$/, "");
+      if (trimmed.endsWith("/ai")) return trimmed;
+      if (trimmed.endsWith("/v1")) return `${trimmed}/ai`;
+      return trimmed;
+    })(),
+  });
 
   constructor(config?: Partial<EmbeddingConfig>) {
     const defaultModel =
-      process.env.EMBEDDING_MODEL || "text-embedding-3-small";
+      process.env.EMBEDDING_MODEL || "openai/text-embedding-3-small";
     const modelDimensions = this.getModelDimensions(defaultModel);
 
     this.config = {
@@ -60,9 +72,11 @@ export class EmbeddingService {
       batchSize: 10,
       chunkSize: 500,
       chunkOverlap: 50,
-      provider: "openai",
+      provider: "gateway",
+      // Gateway API key is required
       apiKey: process.env.AI_GATEWAY_API_KEY || "",
       aiGatewayUrl: process.env.AI_GATEWAY_URL || "",
+      aiGatewayOrder: (process.env.AI_GATEWAY_ORDER || "").split(",").map((s) => s.trim()).filter(Boolean),
       dimensions: modelDimensions,
       ...config,
     };
@@ -73,9 +87,9 @@ export class EmbeddingService {
    */
   private getModelDimensions(model: string): number {
     const modelDimensions: Record<string, number> = {
-      "text-embedding-3-small": 1536,
-      "text-embedding-3-large": 3072,
-      "text-embedding-ada-002": 1536,
+      "openai/text-embedding-3-small": 1536,
+      "openai/text-embedding-3-large": 3072,
+      "openai/text-embedding-ada-002": 1536,
     };
     return modelDimensions[model] || 1536;
   }
@@ -92,13 +106,12 @@ export class EmbeddingService {
       );
 
       if (!this.config.apiKey) {
-        console.warn("⚠️ OpenAI API key not configured for embeddings");
-        console.warn("⚠️ Embedding features will be disabled");
+        console.warn("⚠️ Vercel AI Gateway is required for embeddings. Set AI_GATEWAY_API_KEY (and optionally AI_GATEWAY_URL).");
         return;
       }
 
-      // Initialize the embedding model
-      this.embeddingModel = openai.embedding(this.config.model);
+      // Initialize the embedding model via Gateway
+      this.embeddingModel = this.gatewayProvider.textEmbeddingModel(this.config.model);
 
       this.isInitialized = true;
       console.log("Embedding service initialized successfully");
@@ -109,11 +122,21 @@ export class EmbeddingService {
   }
 
   /**
+   * Check if the embedding service is ready to use
+   */
+  isReady(): boolean {
+    return this.isInitialized && this.embeddingModel !== null;
+  }
+
+  /**
    * Generate embedding for a single text
    */
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.isInitialized) {
       await this.initialize();
+    }
+    if (!this.embeddingModel) {
+      throw new Error('Embedding model is not configured. Set AI_GATEWAY_API_KEY and EMBEDDING_MODEL to enable RAG.');
     }
 
     try {
@@ -123,10 +146,7 @@ export class EmbeddingService {
           ? text.substring(0, this.config.maxLength)
           : text;
 
-      const result = await embed({
-        model: this.embeddingModel,
-        value: truncatedText,
-      });
+      const result = await embed({ model: this.embeddingModel, value: truncatedText });
 
       return result.embedding;
     } catch (error) {

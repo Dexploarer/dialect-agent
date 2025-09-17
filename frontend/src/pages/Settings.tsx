@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useConnection } from '@solana/wallet-adapter-react';
+import Tooltip from '@/components/Tooltip';
 import { toast } from 'react-hot-toast';
 import { 
   CogIcon, 
@@ -66,6 +67,17 @@ export default function Settings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'api' | 'blockchain' | 'notifications' | 'security'>('api');
+  const [textModels, setTextModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [embeddingModels, setEmbeddingModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [selectedTextModel, setSelectedTextModel] = useState<string>('');
+  const [selectedEmbeddingModel, setSelectedEmbeddingModel] = useState<string>('');
+  const [ragEnabled, setRagEnabled] = useState<boolean>(true);
+  const [temperature, setTemperature] = useState<number>(0.7);
+  const [maxTokens, setMaxTokens] = useState<number>(1000);
+  const [webFetchUnrestricted, setWebFetchUnrestricted] = useState<boolean>(false);
+  const [webFetchAllowlist, setWebFetchAllowlist] = useState<string>("");
+  const [webFetchMaxBytes, setWebFetchMaxBytes] = useState<number>(1000000);
+  const [webFetchTimeoutMs, setWebFetchTimeoutMs] = useState<number>(10000);
 
   useEffect(() => {
     loadSettings();
@@ -80,6 +92,26 @@ export default function Settings() {
       
       // For now, use default settings
       setSettings(defaultSettings);
+      // Load AI model lists and current selection from backend
+      try {
+        const modelsRes = await fetch('/api/ai/models');
+        const models = await modelsRes.json();
+        setTextModels(models.textModels || []);
+        setEmbeddingModels(models.embeddingModels || []);
+      } catch {}
+      try {
+        const cfgRes = await fetch('/api/ai/config');
+        const cfg = await cfgRes.json();
+        setSelectedTextModel(cfg.textModel || 'openai/gpt-4o');
+        setSelectedEmbeddingModel(cfg.embeddingModel || 'openai/text-embedding-3-small');
+        if (typeof cfg.ragEnabled === 'boolean') setRagEnabled(cfg.ragEnabled);
+        if (typeof cfg.temperature === 'number') setTemperature(cfg.temperature);
+        if (typeof cfg.maxTokens === 'number') setMaxTokens(cfg.maxTokens);
+        if (typeof cfg.webFetchUnrestricted === 'boolean') setWebFetchUnrestricted(cfg.webFetchUnrestricted);
+        if (Array.isArray(cfg.webFetchAllowlist)) setWebFetchAllowlist(cfg.webFetchAllowlist.join(','));
+        if (typeof cfg.webFetchMaxBytes === 'number') setWebFetchMaxBytes(cfg.webFetchMaxBytes);
+        if (typeof cfg.webFetchTimeoutMs === 'number') setWebFetchTimeoutMs(cfg.webFetchTimeoutMs);
+      } catch {}
     } catch (error) {
       console.error('Failed to load settings:', error);
       toast.error('Failed to load settings');
@@ -98,6 +130,25 @@ export default function Settings() {
       //   body: JSON.stringify(settings),
       // });
       
+      // Persist AI config
+      await fetch('/api/ai/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          textModel: selectedTextModel,
+          embeddingModel: selectedEmbeddingModel,
+          ragEnabled,
+          temperature,
+          maxTokens,
+          webFetchUnrestricted,
+          webFetchAllowlist: webFetchAllowlist
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          webFetchMaxBytes,
+          webFetchTimeoutMs,
+        }),
+      });
       toast.success('Settings saved successfully');
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -155,9 +206,23 @@ export default function Settings() {
           <CogIcon className="h-8 w-8 mr-3" />
           Settings
         </h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-2">
-          Configure your AI agents and system preferences
-        </p>
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-gray-600 dark:text-gray-400">
+            Configure your AI agents and system preferences
+          </p>
+          <div className="flex items-center gap-2">
+            {selectedTextModel && (
+              <span className="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" title="Active text model">
+                {selectedTextModel}
+              </span>
+            )}
+            {selectedEmbeddingModel && (
+              <span className="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" title="Active embedding model">
+                {selectedEmbeddingModel}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Tab Navigation */}
@@ -190,34 +255,153 @@ export default function Settings() {
             <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center">
                 <KeyIcon className="h-5 w-5 mr-2" />
-                AI Provider Configuration
+                AI Provider & Models
               </h3>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    OpenAI API Key
+                    Default Text Model (Vercel AI Gateway)
                   </label>
-                  <input
-                    type="password"
-                    value={settings.openaiApiKey}
-                    onChange={(e) => handleInputChange('openaiApiKey', e.target.value)}
+                  <select
+                    value={selectedTextModel}
+                    onChange={(e) => setSelectedTextModel(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="sk-..."
-                  />
+                  >
+                    {textModels.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Namespaced provider/model id (provider/model), routed via Vercel AI Gateway.
+                  </p>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Anthropic API Key
+                    Embedding Model
                   </label>
-                  <input
-                    type="password"
-                    value={settings.anthropicApiKey}
-                    onChange={(e) => handleInputChange('anthropicApiKey', e.target.value)}
+                  <select
+                    value={selectedEmbeddingModel}
+                    onChange={(e) => setSelectedEmbeddingModel(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                    placeholder="sk-ant-..."
+                  >
+                    {embeddingModels.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Provider-native id for embeddings (OpenAI embedding models).
+                  </p>
+                </div>
+
+                {/* Web Fetch Tool Configuration */}
+                <div className="md:col-span-2">
+                  <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2 flex items-center">
+                    <GlobeAltIcon className="h-4 w-4 mr-2" />
+                    Web Fetch Tool
+                  </h4>
+                  <div className="flex items-center gap-3 mb-3">
+                    <input
+                      id="web-fetch-unrestricted"
+                      type="checkbox"
+                      checked={webFetchUnrestricted}
+                      onChange={(e) => setWebFetchUnrestricted(e.target.checked)}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="web-fetch-unrestricted" className="text-sm text-gray-700 dark:text-gray-300">
+                      Allow any site (unrestricted)
+                    </label>
+                  </div>
+                  {!webFetchUnrestricted && (
+                    <div className="mb-3">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Allowed Domains (comma-separated, e.g. example.com, docs.vercel.ai)
+                      </label>
+                      <input
+                        type="text"
+                        value={webFetchAllowlist}
+                        onChange={(e) => setWebFetchAllowlist(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                        placeholder="example.com, vercel.com"
+                      />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Max Bytes
+                      </label>
+                      <input
+                        type="number"
+                        value={webFetchMaxBytes}
+                        onChange={(e) => setWebFetchMaxBytes(Number(e.target.value))}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Timeout (ms)
+                      </label>
+                      <input
+                        type="number"
+                        value={webFetchTimeoutMs}
+                        onChange={(e) => setWebFetchTimeoutMs(Number(e.target.value))}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <input
+                    id="ragEnabled"
+                    type="checkbox"
+                    checked={ragEnabled}
+                    onChange={(e) => setRagEnabled(e.target.checked)}
+                    className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
+                  <label htmlFor="ragEnabled" className="text-sm text-gray-700 dark:text-gray-300">
+                    Enable Retrieval-Augmented Generation (RAG)
+                  </label>
+                  <Tooltip content={'RAG improves answers by retrieving relevant context from your stored documents and including it in the system prompt.'} />
+                </div>
+
+                <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <span>Temperature ({temperature})</span>
+                  <Tooltip content={'Lower = more deterministic; higher = more creative. Typical range 0.2–1.0'} />
+                </label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    value={temperature}
+                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Controls randomness (0 = deterministic, 2 = very creative)
+                  </p>
+                </div>
+
+                <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <span>Max Tokens</span>
+                  <Tooltip content={'Upper bound for response length. Provider/model limits may cap further.'} />
+                </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8000}
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value || '0'))}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Upper bound for response length; model/provider limits may cap output.
+                  </p>
                 </div>
               </div>
             </div>

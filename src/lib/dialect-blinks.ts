@@ -48,6 +48,7 @@ export interface DialectBlink {
 export interface DialectBlinkConfig {
   apiKey: string;
   baseUrl?: string;
+  clientKey?: string;
 }
 
 export interface BlinkFilters {
@@ -72,96 +73,29 @@ export class DialectBlinksService {
    * Get blink preview by URL
    */
   async getBlinkPreview(blinkUrl: string): Promise<DialectBlinkPreview> {
-    try {
-      const encodedUrl = encodeURIComponent(blinkUrl);
-      const response = await fetch(`${this.baseUrl}/v1/blink-preview?apiUrl=${encodedUrl}`, {
-        method: 'GET',
-        headers: {
-          'x-dialect-api-key': this.config.apiKey,
-          'Content-Type': 'application/json',
-        },
-      });
+    const encodedUrl = encodeURIComponent(blinkUrl);
+    const response = await fetch(`${this.baseUrl}/v1/blink-preview?apiUrl=${encodedUrl}`, {
+      method: 'GET',
+      headers: {
+        'x-dialect-api-key': this.config.apiKey,
+        'Content-Type': 'application/json',
+        ...(this.config.clientKey ? { 'x-blink-client-key': this.config.clientKey } : {}),
+      },
+    });
 
-      if (!response.ok) {
-        console.warn(`Dialect Blinks API error: ${response.status} - ${response.statusText}`);
-        // Return mock preview data for development
-        return this.getMockBlinkPreview(blinkUrl);
-      }
-
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      console.warn('Failed to fetch blink preview, using mock data:', error);
-      // Return mock preview data for development
-      return this.getMockBlinkPreview(blinkUrl);
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`Dialect Blinks API error: ${response.status} - ${response.statusText} ${errorText}`);
     }
+
+    const data = await response.json();
+    return data;
   }
 
   /**
    * Get mock blink preview data for development
    */
-  private getMockBlinkPreview(blinkUrl: string): any {
-    const url = new URL(blinkUrl);
-    const hostname = url.hostname;
-    
-    // Generate mock preview based on URL
-    const mockPreviews: Record<string, any> = {
-      'kamino.dial.to': {
-        title: 'Kamino Deposit',
-        description: 'Deposit tokens to earn yield on Kamino',
-        icon: 'https://kamino.finance/favicon.ico',
-        category: 'DeFi',
-        provider: 'Kamino',
-        action: 'deposit',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to deposit' },
-          { name: 'token', type: 'string', required: true, description: 'Token to deposit' },
-        ],
-        estimatedGas: '0.001 SOL',
-        estimatedTime: '30 seconds',
-      },
-      'marginfi.dial.to': {
-        title: 'MarginFi Deposit',
-        description: 'Deposit tokens to earn yield on MarginFi',
-        icon: 'https://marginfi.com/favicon.ico',
-        category: 'DeFi',
-        provider: 'MarginFi',
-        action: 'deposit',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to deposit' },
-          { name: 'token', type: 'string', required: true, description: 'Token to deposit' },
-        ],
-        estimatedGas: '0.001 SOL',
-        estimatedTime: '30 seconds',
-      },
-      'jito.dial.to': {
-        title: 'Jito Stake',
-        description: 'Stake SOL with Jito for MEV rewards',
-        icon: 'https://jito.wtf/favicon.ico',
-        category: 'Staking',
-        provider: 'Jito',
-        action: 'stake',
-        parameters: [
-          { name: 'amount', type: 'number', required: true, description: 'Amount to stake' },
-        ],
-        estimatedGas: '0.002 SOL',
-        estimatedTime: '45 seconds',
-      },
-    };
-
-    // Return specific mock or default
-    return mockPreviews[hostname] || {
-      title: 'Custom Blink',
-      description: 'Execute blockchain action',
-      icon: 'https://dialect.to/favicon.ico',
-      category: 'Other',
-      provider: 'Unknown',
-      action: 'execute',
-      parameters: [],
-      estimatedGas: '0.001 SOL',
-      estimatedTime: '30 seconds',
-    };
-  }
+  // Removed mock preview generator; failures will now throw errors
 
   /**
    * Get full blink data by URL
@@ -174,6 +108,7 @@ export class DialectBlinksService {
         headers: {
           'x-dialect-api-key': this.config.apiKey,
           'Content-Type': 'application/json',
+          ...(this.config.clientKey ? { 'x-blink-client-key': this.config.clientKey } : {}),
         },
       });
 
@@ -201,6 +136,7 @@ export class DialectBlinksService {
         headers: {
           'x-dialect-api-key': this.config.apiKey,
           'Content-Type': 'application/json',
+          ...(this.config.clientKey ? { 'x-blink-client-key': this.config.clientKey } : {}),
         },
       });
 
@@ -417,6 +353,7 @@ export function createDialectBlinksService(config?: Partial<DialectBlinkConfig>)
   const fullConfig: DialectBlinkConfig = {
     apiKey: process.env.DIALECT_API_KEY || '',
     baseUrl: process.env.DIALECT_API_URL || 'https://api.dialect.to',
+    clientKey: process.env.DIALECT_CLIENT_KEY || undefined,
     ...config,
   };
 

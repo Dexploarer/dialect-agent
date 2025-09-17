@@ -24,24 +24,34 @@ export interface DialectMonitorConfig {
 
 export interface DialectWebhookEvent {
   event: string;
+  timestamp: string;
   token?: {
     symbol: string;
     address: string;
     name?: string;
   };
+  // Price change events may send either legacy or new fields
   change?: {
     direction: 'up' | 'down';
-    percentage_change: number;
-    price_before: number;
-    price_after: number;
+    // Newer schema
+    from?: { timestamp: string; value: number };
+    to?: { timestamp: string; value: number };
+    absolute?: number;
+    percentage?: number;
+    // Legacy schema
+    percentage_change?: number;
+    price_before?: number;
+    price_after?: number;
   };
+  // Trigger details
   trigger?: {
-    window: {
-      duration: string;
-    };
-    threshold: number;
+    type?: string;
+    window?: { duration: string };
+    threshold?: number;
   };
-  timestamp: string;
+  // Trending token events
+  metrics?: Record<string, any>;
+  // Extra payload data
   data?: Record<string, unknown>;
 }
 
@@ -52,6 +62,8 @@ export class DialectEventMonitor extends EventEmitter {
   private subscriptions = new Map<string, DialectSubscription>();
   private eventTriggers = new Map<string, EventTrigger[]>();
   private eventBuffer: SolanaEvent[] = [];
+  private recentWebhookFingerprints: string[] = [];
+  private recentWebhookSet: Set<string> = new Set();
 
   private isConnected = false;
   private reconnectAttempts = 0;
@@ -72,7 +84,7 @@ export class DialectEventMonitor extends EventEmitter {
 
     this.config = {
       solanaRpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
-      solanaWsUrl: process.env.SOLANA_WS_URL || 'wss://api.devnet.solana.com',
+      solanaWsUrl: process.env.SOLANA_WS_URL || process.env.SOLANA_WEBSOCKET_URL || 'wss://api.devnet.solana.com',
       dialectApiUrl: process.env.DIALECT_API_URL || 'https://api.dialect.to',
       dialectWebhookUrl: process.env.DIALECT_WEBHOOK_URL || '/api/webhooks/dialect',
       reconnectInterval: 5000,
@@ -152,6 +164,14 @@ export class DialectEventMonitor extends EventEmitter {
 
     for (const webhookEvent of webhookData) {
       try {
+        // Deduplicate events by fingerprint of payload
+        const fingerprint = this.computeWebhookFingerprint(webhookEvent);
+        if (this.recentWebhookSet.has(fingerprint)) {
+          console.log('⏭️  Skipping duplicate webhook event');
+          continue;
+        }
+        this.rememberWebhookFingerprint(fingerprint);
+
         // Convert Dialect webhook event to our internal format
         const event = this.convertWebhookToEvent(webhookEvent);
         
@@ -176,11 +196,28 @@ export class DialectEventMonitor extends EventEmitter {
   }
 
   /**
+   * Preview normalized events without mutating internal state
+   */
+  previewNormalizedEvents(webhookData: DialectWebhookEvent[]): SolanaEvent[] {
+    const result: SolanaEvent[] = [];
+    for (const evt of webhookData) {
+      try {
+        const converted = this.convertWebhookToEvent(evt);
+        result.push(converted);
+      } catch (e) {
+        // Skip invalid items
+        continue;
+      }
+    }
+    return result;
+  }
+
+  /**
    * Convert Dialect webhook event to internal event format
    */
   private convertWebhookToEvent(webhookEvent: DialectWebhookEvent): SolanaEvent {
-    const eventId = `dialect-${webhookEvent.event}-${Date.now()}`;
-    
+    const eventId = `dialect-${webhookEvent.event}-${webhookEvent.timestamp}-${this.computeWebhookFingerprint(webhookEvent).slice(0, 16)}`;
+
     return {
       id: eventId,
       type: this.mapDialectEventType(webhookEvent.event),
@@ -195,15 +232,92 @@ export class DialectEventMonitor extends EventEmitter {
           instructions: [],
         },
       },
-      parsedData: {
-        dialectEvent: webhookEvent.event,
-        token: webhookEvent.token,
-        change: webhookEvent.change,
-        trigger: webhookEvent.trigger,
-        data: webhookEvent.data,
-      },
+      parsedData: this.normalizeParsedData(webhookEvent),
       processed: false,
     };
+  }
+
+  /**
+   * Normalize Dialect payload into a stable shape while preserving raw fields
+   */
+  private normalizeParsedData(evt: DialectWebhookEvent) {
+    const change = evt.change || {} as any;
+
+    // Prefer explicit values, but fill convenience fields for consumers
+    const percentage =
+      typeof change.percentage === 'number' ? change.percentage :
+      typeof change.percentage_change === 'number' ? change.percentage_change :
+      undefined;
+
+    const absolute =
+      typeof change.absolute === 'number' ? change.absolute : undefined;
+
+    const fromPrice =
+      typeof change.price_before === 'number' ? change.price_before :
+      typeof change.from?.value === 'number' ? change.from.value :
+      undefined;
+
+    const toPrice =
+      typeof change.price_after === 'number' ? change.price_after :
+      typeof change.to?.value === 'number' ? change.to.value :
+      undefined;
+
+    return {
+      dialectEvent: evt.event,
+      token: evt.token,
+      trigger: evt.trigger,
+      metrics: (evt as any).metrics,
+      // Keep original change payload
+      change,
+      // Normalized helpers for conditions/filters
+      changeNormalized: {
+        direction: change.direction,
+        percentage,
+        absolute,
+        fromPrice,
+        toPrice,
+        window: evt.trigger?.window?.duration,
+        threshold: evt.trigger?.threshold,
+      },
+      data: evt.data,
+      raw: evt,
+    };
+  }
+
+  /**
+   * Compute a simple deterministic fingerprint for deduplication
+   */
+  private computeWebhookFingerprint(evt: DialectWebhookEvent): string {
+    try {
+      const canonical = JSON.stringify({
+        event: evt.event,
+        token: evt.token || null,
+        change: evt.change || null,
+        trigger: evt.trigger || null,
+        timestamp: evt.timestamp,
+        data: evt.data || null,
+      });
+      // Simple DJB2 hash to avoid adding heavy deps
+      let hash = 5381;
+      for (let i = 0; i < canonical.length; i++) {
+        hash = ((hash << 5) + hash) ^ canonical.charCodeAt(i);
+      }
+      // Convert to unsigned 32-bit and hex
+      return (hash >>> 0).toString(16);
+    } catch {
+      // Fallback to time-based
+      return `${Date.now()}`;
+    }
+  }
+
+  private rememberWebhookFingerprint(f: string): void {
+    this.recentWebhookSet.add(f);
+    this.recentWebhookFingerprints.push(f);
+    // trim window to last 500 entries
+    if (this.recentWebhookFingerprints.length > 500) {
+      const removed = this.recentWebhookFingerprints.shift();
+      if (removed) this.recentWebhookSet.delete(removed);
+    }
   }
 
   /**
@@ -218,6 +332,22 @@ export class DialectEventMonitor extends EventEmitter {
       default:
         return 'custom_event';
     }
+  }
+
+  /**
+   * Find all matching triggers for an event (does not execute)
+   */
+  public findMatchingTriggersForEvent(event: SolanaEvent): Array<{ agentId: string; trigger: EventTrigger }>{
+    const matches: Array<{ agentId: string; trigger: EventTrigger }> = [];
+    for (const [agentId, triggers] of this.eventTriggers.entries()) {
+      for (const trigger of triggers) {
+        if (!trigger || !trigger.isActive) continue;
+        if ((this as any).matchesEventTrigger(event, trigger)) {
+          matches.push({ agentId, trigger });
+        }
+      }
+    }
+    return matches;
   }
 
   /**

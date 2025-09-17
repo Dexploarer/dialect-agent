@@ -57,6 +57,12 @@ const navigation: NavigationItem[] = [
     description: 'Blockchain event monitor',
   },
   {
+    name: 'Executions',
+    href: '/executions',
+    icon: ChartBarIcon,
+    description: 'Background agent runs',
+  },
+  {
     name: 'Dialect',
     href: '/dialect',
     icon: BoltIcon,

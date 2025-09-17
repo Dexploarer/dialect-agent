@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
@@ -19,6 +19,7 @@ import DialectAuth from './pages/DialectAuth';
 import DialectNotifications from './pages/DialectNotifications';
 import DialectBlinks from './pages/DialectBlinks';
 import DialectMCP from './pages/DialectMCP';
+import Executions from './pages/Executions';
 
 // Import components
 import Layout from './components/Layout';
@@ -71,6 +72,7 @@ function App() {
                       <Route path="/chat" element={<ChatInterface />} />
                       <Route path="/agents" element={<AgentManager />} />
                       <Route path="/events" element={<EventMonitor />} />
+                      <Route path="/executions" element={<Executions />} />
                       <Route path="/dialect" element={<DialectDashboard />} />
                       <Route path="/dialect/auth" element={<DialectAuth />} />
                       <Route path="/dialect/notifications" element={<DialectNotifications />} />
