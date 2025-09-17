@@ -1,10 +1,10 @@
-import { createGateway } from "@ai-sdk/gateway";
 import {
   generateText,
   generateObject,
   streamText,
   jsonSchema,
   tool,
+  gateway,
 } from "ai";
 import type {
   CoreMessage,
@@ -129,10 +129,6 @@ export interface StreamingOptions extends ChatOptions {
 export class AIService {
   private config: AIConfig;
   private models: Map<string, LanguageModel>;
-  private gatewayProvider = createGateway({
-    apiKey: process.env.AI_GATEWAY_API_KEY || '',
-    baseURL: process.env.AI_GATEWAY_URL || 'https://gateway.ai.vercel.com',
-  });
 
   constructor(config?: Partial<AIConfig>) {
     this.config = { ...defaultConfig, ...config };
@@ -159,18 +155,24 @@ export class AIService {
         "anthropic/claude-3-haiku-20240307",
       ];
       for (const id of supportedModels) {
-        this.models.set(id, this.gatewayProvider.languageModel(id));
+        this.models.set(id, gateway(id));
       }
     }
   }
 
   private resolveModelArg(modelName?: string): string | LanguageModel {
     const requested = modelName || this.config.defaultModel;
-    const key = requested.includes("/")
+    const modelId = requested.includes("/")
       ? requested
       : `${this.config.defaultProvider}/${requested}`;
 
-    const selectedModel = this.models.get(key);
+    // When using AI Gateway, we can directly use the gateway function
+    if (this.config.aiGatewayApiKey || process.env.AI_GATEWAY_API_KEY) {
+      return gateway(modelId);
+    }
+
+    // Fallback to registered models
+    const selectedModel = this.models.get(modelId);
     if (!selectedModel) {
       throw new Error(`Model ${requested} not available. Check your API keys and model configuration.`);
     }

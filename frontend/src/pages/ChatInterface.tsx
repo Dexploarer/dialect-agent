@@ -520,7 +520,8 @@ export default function ChatInterface() {
       });
 
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({ error: `API request failed: ${response.status}` }));
+        throw new Error(errorData.error || `API request failed: ${response.status}`);
       }
 
       const data = await response.json();
@@ -557,11 +558,21 @@ export default function ChatInterface() {
           : msg
       ));
 
+      // Create user-friendly error message
+      let errorContent = 'Sorry, I encountered an error while processing your request. Please try again.';
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('GatewayRateLimitError') || errorMessage.includes('rate limits')) {
+        errorContent = '⚠️ AI Gateway rate limit reached. Free credits have temporary limits due to abuse. Please try again later or consider purchasing credits for unrestricted access.';
+      } else if (errorMessage.includes('Failed to generate response')) {
+        errorContent = `⚠️ ${errorMessage}`;
+      }
+
       // Add error message
-      const errorMessage: ChatMessage = {
+      const errorMessageObj: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'agent',
-        content: 'Sorry, I encountered an error while processing your request. Please try again.',
+        content: errorContent,
         timestamp: new Date().toISOString(),
         metadata: {
           responseTime: Date.now() - startTime,
@@ -570,7 +581,7 @@ export default function ChatInterface() {
         },
       };
 
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => [...prev, errorMessageObj]);
     } finally {
       setIsTyping(false);
     }

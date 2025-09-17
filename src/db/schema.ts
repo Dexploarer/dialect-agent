@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { z } from "zod";
+import { Buffer } from "node:buffer";
 
 // Zod schemas for validation
 export const DocumentSchema = z.object({
@@ -144,10 +145,23 @@ export function serializeEmbedding(embedding: number[]): Buffer {
   return buffer;
 }
 
-export function deserializeEmbedding(buffer: Buffer): number[] {
+export function deserializeEmbedding(buffer: Buffer | Uint8Array | ArrayBuffer): number[] {
+  // Ensure we have a proper Buffer
+  let buf: Buffer;
+  if (Buffer.isBuffer(buffer)) {
+    buf = buffer;
+  } else if (buffer instanceof Uint8Array) {
+    buf = Buffer.from(buffer);
+  } else if (buffer instanceof ArrayBuffer) {
+    buf = Buffer.from(buffer);
+  } else {
+    // Fallback: try to convert whatever we got
+    buf = Buffer.from(buffer as any);
+  }
+
   const embedding: number[] = [];
-  for (let i = 0; i < buffer.length; i += 4) {
-    embedding.push(buffer.readFloatLE(i));
+  for (let i = 0; i < buf.length; i += 4) {
+    embedding.push(buf.readFloatLE(i));
   }
   return embedding;
 }
